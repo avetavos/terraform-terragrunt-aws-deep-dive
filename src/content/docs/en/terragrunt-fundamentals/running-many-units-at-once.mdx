@@ -1,0 +1,139 @@
+---
+title: 'Running Many Units at Once'
+description: 'The current run --all command, why plan-all and apply-all were removed, scoping with filter, and before_hook and after_hook.'
+sidebar:
+  order: 4
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## The idea in one sentence
+
+`terragrunt run --all plan` and `terragrunt run --all apply` operate on every unit under the current directory tree at once, in the dependency order established by their `dependency` blocks.
+
+## run --all is the current command
+
+```bash
+terragrunt run --all plan
+terragrunt run --all apply
+```
+
+`run --all` discovers every unit under the current working directory, builds the dependency graph from their `dependency` blocks — covered in the previous lesson — and runs the given command against each one in the correct order. `vpc` applies before `ec2` automatically; nobody has to remember or hard-code that sequencing.
+
+## A word about older syntax you will see in older material
+
+Terragrunt's multi-unit command surface has changed, and a lot of existing blog posts and answers online still describe the old one. Two generations of history are worth knowing so stale advice does not trip you up:
+
+`terragrunt plan-all` and `terragrunt apply-all` (along with `destroy-all`, `output-all`, and `validate-all`) have been **completely removed** from current Terragrunt. They do not exist anymore and will simply fail — do not use them, and treat any tutorial that leans on them as written for a much older version:
+
+```bash
+# Removed entirely — these commands no longer exist in current Terragrunt
+terragrunt plan-all
+terragrunt apply-all
+```
+
+`terragrunt run-all <command>` still runs today but is **deprecated** — it is being replaced by `run --all`, the syntax this course teaches:
+
+```bash
+# Deprecated — being replaced by run --all; avoid in new configuration
+terragrunt run-all plan
+```
+
+## Scoping a run --all, and running non-interactively
+
+Sometimes you do not want every unit in the tree, only a subset — say, everything under one region while leaving the rest of the tree untouched. The `--filter` flag does that, matching units by a path glob. Flags placed before the command need a `--` separator so Terragrunt knows where its own flags end and the per-unit command begins:
+
+```bash
+# Only plan units under ./networking (and anything depending on them)
+terragrunt run --all --filter './networking/**' -- plan
+```
+
+For CI, prompting for a manual confirmation on every unit is not an option — `--non-interactive` skips those prompts so an apply can run unattended:
+
+```bash
+terragrunt run --all --non-interactive -- apply
+```
+
+## before_hook and after_hook
+
+A `terraform` block inside a unit's `terragrunt.hcl` can define `before_hook` and `after_hook` entries — arbitrary shell commands Terragrunt runs immediately before or after a given operation on that specific unit:
+
+```hcl
+# ec2/terragrunt.hcl
+terraform {
+  before_hook "validate_before_plan" {
+    commands = ["plan"]
+    execute  = ["./scripts/validate-tags.sh"]
+  }
+
+  after_hook "notify_slack" {
+    commands     = ["apply"]
+    execute      = ["./scripts/notify-slack.sh"]
+    run_on_error = false
+  }
+}
+```
+
+`commands` lists which Terragrunt commands trigger the hook, `execute` is the actual command Terragrunt runs — as an argument list, not a shell string — and `run_on_error` controls whether an `after_hook` still fires if the operation it is attached to failed. During a `run --all apply` across many units, each unit's own hooks fire around that unit's own apply — the Slack notification above fires once per unit that successfully applies, not once for the whole run.
+
+<Mermaid title="run --all apply fanning out across units in dependency order, with a hook firing after one unit's apply" code={runAllDiagram} />
+
+export const runAllDiagram = `flowchart LR
+  cmd["terragrunt run --all apply"] --> vpc["vpc unit applies first"]
+  vpc --> ec2["ec2 unit applies (depends on vpc)"]
+  vpc --> rds["rds unit applies (depends on vpc)"]
+  vpc -->|after_hook| slack["notify-slack.sh"]`;
+
+<Callout title="The one-line takeaway">
+`terragrunt run --all plan` and `terragrunt run --all apply` are the current commands for operating on every unit under a directory tree at once, executed in the order Terragrunt computes from each unit's `dependency` blocks; `terragrunt plan-all` and `apply-all` have been **removed completely**, and `terragrunt run-all <command>` still works but is **deprecated** in favor of `run --all`. Scope a run to part of the tree with `--filter` and skip interactive prompts in CI with `--non-interactive`, remembering the `--` separator once flags precede the command. A `before_hook` or `after_hook` inside a unit's `terraform` block runs an arbitrary shell command immediately before or after a given operation on that unit — such as validating tags before a `plan` or notifying Slack after a successful `apply`.
+</Callout>
+
+export const quizRunAll = [
+  {
+    q: 'What is the current command for running plan across every unit in a directory tree?',
+    options: [
+      'terragrunt plan-all',
+      'terragrunt run --all plan',
+      'terragrunt run-all plan, which is the current recommended syntax',
+      'terragrunt apply --all',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What happened to terragrunt plan-all and apply-all?',
+    options: [
+      'They were renamed to run --all plan and run --all apply but still work under their old names too',
+      'They have been completely removed from current Terragrunt and no longer exist',
+      'They are the current recommended commands and have not changed',
+      'They only work when combined with the filter flag',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What is the status of the terragrunt run-all command?',
+    options: [
+      'It was removed at the same time as plan-all and apply-all',
+      'It still runs today but is deprecated, being replaced by run --all',
+      'It is the newest syntax, introduced after run --all',
+      'It never existed in Terragrunt',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What is a before_hook or after_hook used for?',
+    options: [
+      'Declaring a unit Terraform provider version',
+      'Running an arbitrary shell command immediately before or after a given operation on a specific unit, such as validating input or sending a notification',
+      'Generating the backend.tf file for a unit',
+      'Setting the order units are applied in during run --all',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="terragrunt-fundamentals/running-many-units-at-once" questions={quizRunAll} />
+
+<ProgressTracker client:visible id="terragrunt-fundamentals/running-many-units-at-once" />

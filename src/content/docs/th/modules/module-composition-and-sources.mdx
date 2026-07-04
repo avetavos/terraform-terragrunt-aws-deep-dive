@@ -1,0 +1,183 @@
+---
+title: 'Module Composition and Sources'
+description: 'source argument กำหนดว่า module code มาจากไหน และ module ประกอบกันได้อย่างไรด้วยการต่อ output ของตัวหนึ่งเข้ากับ input ของอีกตัว'
+sidebar:
+  order: 2
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## The idea in one sentence
+
+`source` argument บน `module` block บอก Terraform ว่าจะไปเอา code ของ module นั้นมาจากไหน และ infrastructure จริงที่ไม่เล็กจะถูกสร้างขึ้นด้วยการเอา module เล็ก ๆ หลายตัวมาประกอบกัน — output ของ module หนึ่งถูกส่งตรงเข้าไปเป็น input variable ของอีก module หนึ่ง
+
+## source มาจากไหนบ้าง
+
+ทุก `module` block ต้องมี `source` และมีสามแบบหลักที่คุณจะเจอบ่อยมาก **local relative path** ชี้ไปที่ directory ภายใน repository ของคุณเอง **public Terraform Registry** resolve address สั้น ๆ แบบ `<namespace>/<name>/<provider>` ไปเป็น module ที่ publish ไว้และมี version **Git URL** ชี้ตรงไปที่ repository โดยจะ pin ไว้ที่ tag, branch หรือ commit ไหนก็ได้ผ่าน `?ref=`
+
+```hcl
+# local relative path
+module "bucket" {
+  source = "./modules/s3-bucket"
+}
+
+# public Terraform Registry
+module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "~> 5.0"
+}
+
+# Git URL pinned to a specific tag
+module "vpc_from_git" {
+  source = "git::https://github.com/acme/terraform-modules.git//vpc?ref=v1.4.0"
+}
+```
+
+ทั้งสามแบบคือคำตอบที่ต่างกันของคำถามเดียวกัน คือ Terraform จะไปเอาไฟล์ `.tf` ของ child module นี้มาจากไหน ไม่มีอะไรในวิธีเขียน `variables.tf`, `main.tf` หรือ `outputs.tf` ข้างใน module ที่ต้องเปลี่ยนตาม `source` แบบไหนที่ caller เลือกใช้
+
+## ประกอบ module: output ของตัวหนึ่งกลายเป็น input ของอีกตัว
+
+configuration แบบแบนราบตัวเดียวที่มี resource เป็นร้อยตัวนั้นอ่านยากและ reuse ไม่ได้เลย infrastructure จริงถูกสร้างจาก module เล็ก ๆ ที่ focus งานเดียว แล้วต่อกันผ่าน output กับ input `vpc` module หนึ่งเปิด identifier ที่ module อื่นต้องการ
+
+```hcl
+# modules/vpc/outputs.tf
+output "vpc_id" {
+  description = "ID of the created VPC"
+  value       = aws_vpc.this.id
+}
+
+output "private_subnet_ids" {
+  description = "IDs of the private subnets"
+  value       = aws_subnet.private[*].id
+}
+```
+
+`ec2-instance` module ประกาศ input ที่มันต้องการเพื่อ launch เข้าไปใน network นั้น
+
+```hcl
+# modules/ec2-instance/variables.tf
+variable "vpc_id" {
+  description = "ID of the VPC to launch the instance into"
+  type        = string
+}
+
+variable "subnet_id" {
+  description = "ID of the subnet to launch the instance into"
+  type        = string
+}
+```
+
+root configuration คือจุดที่ต่อทั้งสอง module เข้าด้วยกันจริง โดยส่ง output ของ module หนึ่งตรงเข้าไปเป็น input ของอีก module หนึ่ง
+
+```hcl
+# root main.tf
+module "vpc" {
+  source     = "./modules/vpc"
+  cidr_block = "10.0.0.0/16"
+}
+
+module "web_server" {
+  source = "./modules/ec2-instance"
+
+  vpc_id    = module.vpc.vpc_id
+  subnet_id = module.vpc.private_subnet_ids[0]
+}
+```
+
+ทั้งสอง module ไม่จำเป็นต้องรู้จักกันเลย `vpc` module ไม่รู้ด้วยซ้ำว่าจะมี `ec2-instance` module มา consume output ของมันในอนาคต และ `ec2-instance` module ก็ไม่รู้ว่า `vpc_id` ที่ได้รับมาจาก module หรือแค่ string ที่ hardcode ไว้ root configuration เป็นจุดเดียวที่รู้จักทั้งสอง module และเป็นคนเชื่อมมันเข้าด้วยกัน
+
+## public Terraform Registry คือตัวเร่ง productivity ตัวจริง
+
+pattern ทั่วไปอย่าง "VPC ที่มี public/private subnet" ถูกแก้ปัญหามาแล้วหลายรอบ public Terraform Registry มี community module ที่ดูแลดีและถูกใช้กันแพร่หลาย — `terraform-aws-modules/vpc/aws` เป็นหนึ่งในจุดเริ่มต้นที่พบบ่อยที่สุดสำหรับ AWS networking — และการหยิบตัวนี้มาใช้มักคุ้มค่ากับเวลาของคุณมากกว่าการเขียนสิ่งเดียวกันขึ้นมาเองตั้งแต่ศูนย์
+
+```hcl
+module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "~> 5.0"
+
+  name = "acme-app-vpc"
+  cidr = "10.0.0.0/16"
+
+  azs             = ["us-east-1a", "us-east-1b"]
+  private_subnets = ["10.0.1.0/24", "10.0.2.0/24"]
+  public_subnets  = ["10.0.101.0/24", "10.0.102.0/24"]
+}
+```
+
+อย่างไรก็ตาม "ใช้กันแพร่หลาย" ไม่เหมือนกับ "เชื่อได้แบบไม่ต้องตรวจ" ก่อนสร้าง production infrastructure บน Registry module ตัวไหน ควรอ่านให้แน่ใจว่ามัน create อะไรจริง ๆ บ้าง — resource ของมัน, ค่า default ของมัน และ IAM permission ที่มันสร้างในนามคุณ Registry module ก็ยังเป็น code ของคนอื่นที่รันด้วย AWS credential ของคุณอยู่ดี
+
+<Mermaid title="A vpc module's outputs feeding an ec2-instance module's inputs from the root configuration" code={moduleCompositionDiagram} />
+
+export const moduleCompositionDiagram = `flowchart LR
+  subgraph root["Root configuration"]
+    vpcmod["module vpc"]
+    ec2mod["module web_server"]
+  end
+  subgraph vpc["Child module: vpc"]
+    vpcout1["output vpc_id"]
+    vpcout2["output private_subnet_ids"]
+  end
+  subgraph ec2["Child module: ec2-instance"]
+    ec2in1["var.vpc_id"]
+    ec2in2["var.subnet_id"]
+  end
+  vpcmod --> vpcout1
+  vpcmod --> vpcout2
+  vpcout1 -->|module.vpc.vpc_id| ec2in1
+  vpcout2 -->|module.vpc.private_subnet_ids[0]| ec2in2
+  ec2in1 --> ec2mod
+  ec2in2 --> ec2mod`;
+
+<Callout title="The one-line takeaway">
+`source` argument บอก Terraform ว่า code ของ module อยู่ที่ไหน — **local relative path**, public **Terraform Registry** หรือ **Git URL** ที่มี `?ref=` เพื่อ pin version ก็ได้ — และ infrastructure จริงถูกสร้างด้วยการ **compose** module เล็ก ๆ ที่ focus งานเดียวเข้าด้วยกัน โดยส่ง `output` ของ module หนึ่งตรงเข้าไปเป็น input variable ของอีก module หนึ่งภายใน root configuration ที่เป็นคนต่อมันเข้าด้วยกัน community module ที่ดูแลดีบน public Registry อย่าง `terraform-aws-modules/vpc/aws` มักเป็นจุดเริ่มต้นที่ดีกว่าการเขียน pattern ทั่วไปขึ้นมาเองตั้งแต่ศูนย์ แต่ก็ยังควรอ่านให้แน่ใจว่า Registry module นั้น create อะไรจริง ๆ ก่อนเชื่อมันใน production
+</Callout>
+
+export const quizModuleComposition = [
+  {
+    q: 'บทเรียนนี้พูดถึง module source สามแบบไหนบ้าง',
+    options: [
+      'มีแค่ local relative path เท่านั้นที่เป็น module source ที่ใช้ได้',
+      'local relative path, public Terraform Registry และ Git URL ที่มี ref เป็น option',
+      'ใช้ได้แค่ module ที่ publish บน public Terraform Registry เท่านั้น',
+      'S3 bucket URL, Docker image และ environment variable',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'ในตัวอย่างการประกอบ vpc กับ ec2-instance ec2-instance module ได้รับ subnet ที่ต้อง launch เข้าไปอย่างไร',
+    options: [
+      'ec2-instance module hardcode ค่า subnet_id ไว้ข้างในเอง',
+      'root configuration ส่ง module.vpc.private_subnet_ids[0] เป็นค่าของ input subnet_id ของ ec2-instance module',
+      'Terraform เดา subnet ให้อัตโนมัติจาก region ของ AWS provider',
+      'vpc module เรียก ec2-instance module ตรง ๆ โดยไม่ผ่าน root configuration',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'vpc module ในตัวอย่างต้องรู้หรือไม่ว่ามี ec2-instance module มา consume output ของมัน',
+    options: [
+      'ต้องรู้ vpc module ต้อง import ec2-instance module เพื่อ expose output ให้เข้ากันได้',
+      'ไม่ต้องรู้ vpc module แค่ expose output ของมันออกไป ส่วน root configuration เป็นจุดเดียวที่เชื่อมทั้งสอง module เข้าด้วยกัน',
+      'ต้องรู้ Terraform บังคับให้ module ต้องประกาศว่า module ไหนจะมา consume output ของมันได้',
+      'ไม่ต้องรู้ เพราะ module composition ทำงานได้ก็ต่อเมื่อทั้งสอง module มาจาก source เดียวกัน',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'ควรหยิบ public Terraform Registry module มาใช้แทนการเขียนเองตั้งแต่ศูนย์เมื่อไร',
+    options: [
+      'ไม่ควรเลย module ที่เขียนเองปลอดภัยกว่า Registry module เสมอ',
+      'ควรเสมอ Registry module ไม่ต้อง review ก่อนใช้',
+      'สำหรับ pattern ทั่วไปที่ถูกแก้ปัญหามาแล้ว เช่น VPC layout มาตรฐาน แต่ก็ยังควรอ่านให้แน่ใจว่า module นั้น create อะไรก่อนเชื่อมันใน production',
+      'เฉพาะตอนที่ module source เป็น local relative path เท่านั้น',
+    ],
+    answer: 2,
+  },
+];
+
+<Quiz client:visible id="modules/module-composition-and-sources" questions={quizModuleComposition} />
+
+<ProgressTracker client:visible id="modules/module-composition-and-sources" />

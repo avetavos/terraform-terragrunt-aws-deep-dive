@@ -1,0 +1,123 @@
+---
+title: 'Testing Modules'
+description: 'สามระดับความมั่นใจของ module - terraform validate, terraform plan และ terraform test - และวิธีเขียนไฟล์ tftest.hcl'
+sidebar:
+  order: 4
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## The idea in one sentence
+
+`terraform validate`, `terraform plan` และ `terraform test` แต่ละตัวจับความผิดพลาดคนละประเภทกันโดยสิ้นเชิง การผ่านตัวใดตัวหนึ่งไม่ได้บอกอะไรเลยว่าตัวอื่นจะผ่านด้วย
+
+## สามระดับความมั่นใจที่แตกต่างกัน
+
+มันน่าเผลอมองว่า `validate`, `plan` และ `test` เป็นวิธีตรวจสอบว่า module "ทำงานหรือไม่" ที่ใช้แทนกันได้ แต่จริง ๆ แล้วไม่ใช่ — แต่ละตัวคุยกับ reality คนละชั้น
+
+`terraform validate` ตรวจแค่ syntax ของ HCL กับความสอดคล้องภายใน configuration เท่านั้น เช่น block เขียนถูกต้องหรือไม่ variable และ resource ที่อ้างอิงมีอยู่จริงหรือไม่ type ตรงกันหรือไม่ ที่สำคัญคือมันไม่คุยกับ AWS เลยแม้แต่นิดเดียว module หนึ่งอาจผ่าน `validate` แบบเนียน ๆ แล้วพังทันทีที่ไปแตะ AWS account จริง เพราะ `validate` ไม่มีทางรู้เลยว่า IAM permission ของคุณ, service quota ของ account หรือ AWS API เห็นด้วยกับสิ่งที่คุณเขียนหรือไม่
+
+`terraform plan` ปิดช่องว่างนี้ด้วยการคุยกับ AWS API จริง มันจับ error ฝั่ง provider ได้ — AMI ID พิมพ์ผิด, region ที่ resource type นั้นไม่รองรับ, permission ที่ credential ของคุณไม่มี — และแสดง diff ของสิ่งที่จะเปลี่ยน แต่ `plan` ไม่ assert อะไรเลยว่าผลลัพธ์นั้นถูกต้อง มันแสดง diff ให้ดูอย่างสบายใจแม้ bucket จะตั้งชื่อผิด, subnet อยู่ผิด CIDR range หรือ security group เปิด port ที่ไม่ตั้งใจ ตราบใดที่ diff นั้น consistent ภายในตัวมันเอง
+
+`terraform test` เป็นตัวเดียวในสามตัวที่ assert behavior ที่คาดหวังไว้จริง ๆ มันคือ native testing framework ของ Terraform และเป็นตัวที่บอกได้จริงว่า module ทำในสิ่งที่คุณตั้งใจให้มันทำหรือไม่ ไม่ใช่แค่ Terraform parse หรือ apply มันได้
+
+## native test framework ของ Terraform
+
+test อยู่ในไฟล์ `.tftest.hcl` และรันด้วย `terraform test` ไฟล์ test หนึ่งมี `variables` block สำหรับค่า input เฉพาะของ test และมี `run` block หนึ่งตัวหรือมากกว่า แต่ละตัวมี `assert` block ที่มี `condition` expression กับ `error_message` string ที่แสดงเมื่อ condition นั้นเป็นเท็จ
+
+```hcl
+# tests/s3_bucket.tftest.hcl
+variables {
+  bucket_name = "acme-app-logs-test"
+}
+
+run "bucket_name_matches_input" {
+  command = plan
+
+  assert {
+    condition     = aws_s3_bucket.this.bucket == var.bucket_name
+    error_message = "Bucket name did not match the bucket_name input variable"
+  }
+}
+```
+
+test นี้เล็งไปที่ pattern ของ `s3-bucket` module จากบทก่อนหน้าในโมดูลนี้ มันตั้ง `bucket_name` เป็น input เฉพาะของ test แล้ว assert ว่า attribute `aws_s3_bucket.this.bucket` ที่ได้ตรงกับค่าที่ส่งเข้ามาเป๊ะ ถ้ามีใครแก้ module แล้วเผลอ hardcode ชื่อ bucket หรือส่ง variable ผิดตัวเข้ามา assertion นี้จะ fail พร้อม message ที่ชี้ตรงไปที่ความผิดพลาด — สิ่งที่ `validate` กับ `plan` เพียงอย่างเดียวไม่มีทางจับได้เลย
+
+## command = plan เทียบกับ command = apply
+
+ทุก `run` block มี `command` argument และการเลือกระหว่าง `plan` กับ `apply` คือ trade-off จริง ไม่ใช่แค่ความชอบส่วนตัว
+
+`command = plan` เร็วและไม่สร้าง resource จริงเลย Terraform สร้าง plan แล้ว assertion ของคุณตรวจค่าที่วางแผนไว้ — เหมือนตัวอย่างข้างบนเป๊ะ นี่คือ default ที่ถูกต้องสำหรับ test case ส่วนใหญ่ เพราะมัน validate behavior ที่คาดหวังไว้ได้โดยไม่ต้องแตะ AWS account จริงเลย
+
+`command = apply` สร้าง resource จริง assert บน attribute ที่เกิดขึ้นจริง แล้วรื้อทุกอย่างทิ้งอีกครั้งตอนจบไฟล์ test นี่คือ integration testing ตัวจริง มันจับปัญหาที่ `plan` จับไม่ได้ เช่น AWS API ปฏิเสธ combination ของ argument ที่ดูดีบนกระดาษ ต้นทุนคือช้ากว่าและสร้าง cloud resource จริงชั่วคราว ดังนั้นควรเก็บไว้ใช้กับ assertion ที่ต้องดู behavior จริงของ AWS โดยเฉพาะ
+
+```hcl
+run "bucket_is_created_with_correct_name" {
+  command = apply
+
+  assert {
+    condition     = aws_s3_bucket.this.bucket == var.bucket_name
+    error_message = "Real bucket name in AWS did not match the bucket_name input variable"
+  }
+}
+```
+
+<Mermaid title="Three increasing rungs of confidence, each catching a different class of mistake" code={testingLevelsDiagram} />
+
+export const testingLevelsDiagram = `flowchart TB
+  a["terraform validate: HCL syntax and internal consistency only, never talks to AWS"] --> b["terraform plan: talks to the real AWS API, catches provider-side errors, shows the diff"]
+  b --> c["terraform test: asserts specific expected behavior via .tftest.hcl run blocks"]`;
+
+<Callout title="The one-line takeaway">
+`terraform validate`, `terraform plan` และ `terraform test` คือสามระดับความมั่นใจที่ต่างกัน ไม่ใช่การตรวจแบบใช้แทนกันได้ **validate** ตรวจแค่ syntax ของ HCL กับความสอดคล้องภายในและไม่คุยกับ AWS เลย **plan** คุยกับ AWS API จริงและแสดง diff แต่ไม่ assert ว่า diff นั้นถูกต้อง ส่วน **test** คือ native testing framework ของ Terraform ที่ assert behavior ที่คาดหวังจริง ๆ ผ่านไฟล์ `.tftest.hcl` ที่มี `variables`, `run` block และ `assert` block ที่มี `condition` กับ `error_message` `command` argument ของ `run` block เลือกได้ระหว่าง `plan` — เร็ว ไม่มี resource จริง เป็น default ที่ถูกต้องสำหรับส่วนใหญ่ — กับ `apply` — ช้ากว่า สร้างและรื้อ resource จริง แต่เป็น integration testing ตัวจริง
+</Callout>
+
+export const quizTestingModules = [
+  {
+    q: 'terraform validate ตรวจสอบอะไรจริง ๆ',
+    options: [
+      'ตรวจแค่ syntax ของ HCL กับความสอดคล้องภายใน configuration เท่านั้น และไม่คุยกับ AWS เลย',
+      'คุยกับ AWS API จริงและยืนยันว่า resource ทุกตัวสร้างได้จริง',
+      'assert ค่าที่คาดหวังจริง ๆ บน resource attribute เหมือนกับ terraform test',
+      'รัน apply กับ destroy เต็มรอบเพื่อยืนยันว่า module ทำงานถูกต้อง',
+    ],
+    answer: 0,
+  },
+  {
+    q: 'ใน run block ของไฟล์ .tftest.hcl command = plan กับ command = apply ต่างกันอย่างไร',
+    options: [
+      'ไม่ต่างกันเลย ทั้งสองสร้างและรื้อ resource จริงเหมือนกัน',
+      'command = plan ช้ากว่าเพราะต้องคุยกับ AWS สองรอบ ส่วน command = apply เร็วกว่า',
+      'command = plan ตรวจค่าที่วางแผนไว้โดยไม่สร้าง resource จริง ส่วน command = apply สร้าง resource จริง assert บน attribute จริงของมัน แล้วรื้อทิ้งตอนจบ',
+      'command = plan ใช้ได้แค่กับ resource type aws_s3_bucket เท่านั้น',
+    ],
+    answer: 2,
+  },
+  {
+    q: 'ทำไม module ที่ผ่าน terraform validate ถึงไม่ได้แปลว่ามันทำงานได้จริงกับ AWS',
+    options: [
+      'เพราะ validate ตรวจแค่ syntax ของ HCL กับความสอดคล้องภายใน และไม่ติดต่อ AWS API เลย จึงจับ error ฝั่ง provider หรือ behavior ที่ผิดไม่ได้',
+      'เพราะ validate ถูก deprecate ไปแล้วและไม่ตรวจอะไรจริง ๆ',
+      'เพราะ validate ใช้ได้แค่กับ module ที่มา source จาก public Terraform Registry เท่านั้น',
+      'เพราะ validate ต้องการ AWS session ที่ active อยู่ ดังนั้นถ้าไม่ตั้งค่า credential จะ pass ผิด ๆ เสมอ',
+    ],
+    answer: 0,
+  },
+  {
+    q: 'terraform test เพิ่มอะไรเข้ามาเหนือกว่าสิ่งที่ terraform plan ให้ได้อยู่แล้ว',
+    options: [
+      'ไม่มีอะไรเลย plan กับ test ตรวจสิ่งเดียวกันเป๊ะ',
+      'terraform test assert behavior ที่คาดหวังจริง ๆ ผ่าน condition กับ error_message ในขณะที่ plan แค่แสดง diff โดยไม่ assert ว่า diff นั้นถูกต้อง',
+      'terraform test แทนที่ความจำเป็นของ provider configuration ไปเลยทั้งหมด',
+      'terraform test รันได้เฉพาะตอนที่ไม่มี variables block เท่านั้น',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="modules/testing-modules" questions={quizTestingModules} />
+
+<ProgressTracker client:visible id="modules/testing-modules" />

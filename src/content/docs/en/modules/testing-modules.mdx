@@ -1,0 +1,123 @@
+---
+title: 'Testing Modules'
+description: 'The three levels of confidence for a module - terraform validate, terraform plan, and terraform test - and how to write a tftest.hcl file.'
+sidebar:
+  order: 4
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## The idea in one sentence
+
+`terraform validate`, `terraform plan`, and `terraform test` each catch a completely different class of mistake, and passing one of them tells you nothing about whether the others would pass too.
+
+## Three different levels of confidence
+
+It is tempting to treat `validate`, `plan`, and `test` as interchangeable ways to check whether a module "works," but they are not — each one talks to a different layer of reality.
+
+`terraform validate` only checks HCL syntax and internal configuration consistency: are your blocks well-formed, do referenced variables and resources actually exist, are types consistent. Crucially, it never talks to AWS at all. A module can pass `validate` cleanly and still fail the instant it touches a real AWS account, because `validate` has no way to know whether your IAM permissions, your account's service quotas, or an AWS API even agrees with what you wrote.
+
+`terraform plan` closes that gap by talking to the real AWS API. It catches provider-side errors — a typo in an AMI ID, a region where a resource type is not available, a permission your credentials do not have — and shows you the diff of what would change. But `plan` does not assert anything specific about the result being correct. It happily shows you a diff for a bucket with the wrong name, a subnet in the wrong CIDR range, or a security group with an unintended open port, as long as that diff is internally consistent.
+
+`terraform test` is the only one of the three that actively asserts specific expected behavior. It is Terraform's native testing framework, and it is what actually tells you the module does what you meant it to do, not just that Terraform could parse or apply it.
+
+## Terraform's native test framework
+
+Tests live in `.tftest.hcl` files and run with `terraform test`. A test file has a `variables` block for test-specific input values, and one or more `run` blocks, each containing an `assert` block with a `condition` expression and an `error_message` string shown when that condition is false.
+
+```hcl
+# tests/s3_bucket.tftest.hcl
+variables {
+  bucket_name = "acme-app-logs-test"
+}
+
+run "bucket_name_matches_input" {
+  command = plan
+
+  assert {
+    condition     = aws_s3_bucket.this.bucket == var.bucket_name
+    error_message = "Bucket name did not match the bucket_name input variable"
+  }
+}
+```
+
+This test targets the `s3-bucket` module pattern from earlier in this module: it sets `bucket_name` as a test-specific input, then asserts that the resulting `aws_s3_bucket.this.bucket` attribute matches exactly what was passed in. If someone edits the module and accidentally hardcodes a bucket name, or passes the wrong variable through, this assertion fails with a clear message pointing at the mistake — something `validate` and `plan` alone would never catch.
+
+## command = plan versus command = apply
+
+Every `run` block has a `command` argument, and the choice between `plan` and `apply` is a real trade-off, not a stylistic preference.
+
+`command = plan` is fast and creates no real resources. Terraform builds the plan, and your assertions check the planned values — exactly what happened in the example above. This is the right default for the majority of test cases, since it validates expected behavior without ever touching a live AWS account.
+
+`command = apply` actually creates real resources, asserts on their real resulting attributes, and then tears everything down again at the end of the test file. This is genuine integration testing — it can catch problems `plan` cannot, like an AWS API rejecting a combination of arguments that looked fine on paper. The cost is that it is slower and briefly provisions real cloud resources, so it is worth reserving for the assertions that specifically need to observe real AWS behavior.
+
+```hcl
+run "bucket_is_created_with_correct_name" {
+  command = apply
+
+  assert {
+    condition     = aws_s3_bucket.this.bucket == var.bucket_name
+    error_message = "Real bucket name in AWS did not match the bucket_name input variable"
+  }
+}
+```
+
+<Mermaid title="Three increasing rungs of confidence, each catching a different class of mistake" code={testingLevelsDiagram} />
+
+export const testingLevelsDiagram = `flowchart TB
+  a["terraform validate: HCL syntax and internal consistency only, never talks to AWS"] --> b["terraform plan: talks to the real AWS API, catches provider-side errors, shows the diff"]
+  b --> c["terraform test: asserts specific expected behavior via .tftest.hcl run blocks"]`;
+
+<Callout title="The one-line takeaway">
+`terraform validate`, `terraform plan`, and `terraform test` are three different levels of confidence, not interchangeable checks: **validate** only checks HCL syntax and internal consistency and never talks to AWS, **plan** talks to the real AWS API and shows a diff but asserts nothing about that diff being correct, and **test** is Terraform's native testing framework that actively asserts expected behavior through `.tftest.hcl` files with `variables`, `run` blocks, and `assert` blocks containing a `condition` and `error_message`. A `run` block's `command` argument chooses between `plan` — fast, no real resources, the right default for most cases — and `apply` — slower, creates and tears down real resources, but is genuine integration testing.
+</Callout>
+
+export const quizTestingModules = [
+  {
+    q: 'What does terraform validate actually check',
+    options: [
+      'It checks HCL syntax and internal configuration consistency only, and never talks to AWS at all',
+      'It talks to the real AWS API and confirms every resource can actually be created',
+      'It asserts specific expected values on resource attributes, the same as terraform test',
+      'It runs the full apply and destroy cycle to confirm the module behaves correctly',
+    ],
+    answer: 0,
+  },
+  {
+    q: 'In a .tftest.hcl run block, what is the difference between command = plan and command = apply',
+    options: [
+      'There is no real difference, both create and destroy real resources identically',
+      'command = plan is slower because it has to talk to AWS twice, while command = apply is faster',
+      'command = plan validates expected planned values without creating real resources, while command = apply creates real resources, asserts on their actual attributes, and tears them down at the end',
+      'command = plan can only be used with the aws_s3_bucket resource type',
+    ],
+    answer: 2,
+  },
+  {
+    q: 'Why does a module passing terraform validate not mean it actually works against real AWS',
+    options: [
+      'Because validate only checks HCL syntax and internal consistency and never contacts the AWS API, so it cannot catch provider-side errors or incorrect resulting behavior',
+      'Because validate is deprecated and no longer performs any real checks',
+      'Because validate only works for modules sourced from the public Terraform Registry',
+      'Because validate requires an active AWS session, so failing to configure credentials always causes a false pass',
+    ],
+    answer: 0,
+  },
+  {
+    q: 'What does terraform test add on top of what terraform plan already provides',
+    options: [
+      'Nothing meaningful, plan and test check exactly the same things',
+      'terraform test actively asserts specific expected behavior via condition and error_message, whereas plan only shows a diff without asserting the diff is correct',
+      'terraform test replaces the need for a provider configuration entirely',
+      'terraform test can only be run without a variables block',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="modules/testing-modules" questions={quizTestingModules} />
+
+<ProgressTracker client:visible id="modules/testing-modules" />

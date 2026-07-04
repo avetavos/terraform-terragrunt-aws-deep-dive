@@ -1,0 +1,131 @@
+---
+title: 'Terraform Workspaces'
+description: 'How Terraform workspaces isolate state per environment from one shared configuration, and where that isolation stops.'
+sidebar:
+  order: 2
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## The idea in one sentence
+
+A Terraform **workspace** lets one configuration and one backend produce several independent state files, switched by name from the CLI, with zero duplicated `.tf` code.
+
+## Creating and switching workspaces
+
+Every Terraform configuration starts with a single workspace named `default`. You create and switch between additional named workspaces with three commands:
+
+```bash
+# Create a new workspace and switch to it immediately
+terraform workspace new dev
+
+# List every workspace; the active one is marked with an asterisk
+terraform workspace list
+#   default
+# * dev
+#   staging
+#   prod
+
+# Switch to an existing workspace
+terraform workspace select staging
+```
+
+Each workspace gets its own state file, but every workspace still reads the exact same `.tf` files and points at the exact same backend configuration. Running `terraform plan` in the `dev` workspace only ever looks at the `dev` state; switch to `staging` and Terraform behaves as if it has never seen the `staging` resources before, because as far as that state file is concerned, it has not.
+
+## Varying behavior with terraform.workspace
+
+The active workspace name is available inside your configuration as the built-in value `terraform.workspace`. Interpolating it lets one set of `.tf` files behave differently depending on which workspace is currently selected:
+
+```hcl
+locals {
+  instance_size = {
+    dev     = "t3.micro"
+    staging = "t3.small"
+    prod    = "m5.large"
+  }
+}
+
+resource "aws_instance" "app" {
+  ami           = data.aws_ami.app.id
+  instance_type = local.instance_size[terraform.workspace]
+
+  tags = {
+    Name = "app-${terraform.workspace}"
+  }
+}
+```
+
+This is genuinely DRY: there is exactly one `aws_instance` block, one place to fix a bug in it, and the instance size and name still come out different per workspace. No copy-pasted directories, no duplicated resource definitions.
+
+## What a workspace does not isolate
+
+Here is the limitation to hold onto: a workspace only isolates **state**. It changes nothing else. Every workspace built from the same configuration shares:
+
+- The exact same **backend configuration** — same S3 bucket, same region, same account.
+- The exact same **provider configuration** — same AWS credentials, unless you write conditional logic to vary them.
+- The exact same **`.tf` code** — there is no hard boundary preventing a `dev` workspace from containing a resource block that, if misconfigured, is just as capable of touching production-scale infrastructure as any other workspace.
+
+That makes workspaces a good fit for lightweight, structurally identical variation — a short-lived feature-branch preview environment that just needs its own state and a smaller instance size is a great use case. It is a poor fit the moment an environment needs a genuinely different AWS account, a different region, or different credentials from the others, because a workspace cannot express any of that; it is just a name.
+
+The sharper, everyday risk is human, not architectural: the active workspace is a piece of CLI-selected state that lives outside your `.tf` files entirely. Nothing stops an engineer from believing they are in `dev`, running `terraform apply`, and discovering only afterward that the terminal was still sitting in `prod` from an hour earlier. There is no separate credential, no separate account boundary, no confirmation prompt tied to the workspace name — just a string that is easy to forget.
+
+<Mermaid title="One Terraform config and backend, three workspaces, three separate state files — everything else shared" code={workspaceDiagram} />
+
+export const workspaceDiagram = `flowchart LR
+  cfg["One .tf config + one backend"] --> dev["workspace: dev (own state file)"]
+  cfg --> staging["workspace: staging (own state file)"]
+  cfg --> prod["workspace: prod (own state file)"]`;
+
+<Callout title="The one-line takeaway">
+A Terraform **workspace** gives one configuration and one backend multiple independent **state files**, selected by name via `terraform workspace new/select/list` and read inside `.tf` code through `terraform.workspace` — a genuinely DRY way to vary instance sizes, names, and tags per environment with zero duplicated code. What it does **not** isolate is the backend, the provider configuration, or the `.tf` code itself, which makes it a poor fit for environments that need separate AWS accounts, regions, or credentials, and leaves a real everyday risk: nothing stops applying against the wrong workspace by mistake, since it is just a CLI-selected string.
+</Callout>
+
+export const quizWorkspaces = [
+  {
+    q: 'What does a Terraform workspace actually isolate, and what does it not isolate',
+    options: [
+      'It isolates the AWS account and credentials, but shares state',
+      'It isolates the state file, but the backend configuration, provider configuration, and .tf code are all shared across every workspace',
+      'It isolates everything, including provider credentials and backend configuration',
+      'It isolates nothing; workspaces are purely a labeling convention with no functional effect',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What is terraform.workspace typically used for inside a configuration',
+    options: [
+      'Setting the AWS region for the provider block',
+      'Interpolating the active workspace name into resource names, tags, or a lookup map so behavior like instance size varies per workspace without duplicating resource blocks',
+      'Authenticating to the remote backend',
+      'Locking the state file during apply',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What is the specific real-world risk that comes from using workspaces for environment separation',
+    options: [
+      'Workspaces are automatically deleted after 30 days of inactivity',
+      'Because the active workspace is just a CLI-selected string with no separate account, credential, or hard boundary, it is easy to apply against the wrong workspace by mistake',
+      'Workspaces cannot be used with the S3 backend',
+      'Workspaces require a paid Terraform Cloud subscription',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'When is using workspaces a good fit versus a poor fit',
+    options: [
+      'Good fit for any number of environments regardless of account or region; poor fit only for single-environment projects',
+      'Good fit for lightweight, structurally identical variation like short-lived feature-branch previews; poor fit when environments need genuinely separate AWS accounts, regions, or credentials',
+      'Good fit only for production; poor fit for dev and staging',
+      'Workspaces are equally suited to every case, with no tradeoffs',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="multi-environment/terraform-workspaces" questions={quizWorkspaces} />
+
+<ProgressTracker client:visible id="multi-environment/terraform-workspaces" />

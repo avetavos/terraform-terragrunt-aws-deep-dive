@@ -1,0 +1,150 @@
+---
+title: 'Count and For Each'
+description: 'Creating multiple copies of a resource with count and for_each, why index-based count breaks when an item is removed from the middle of a list, and how for expressions differ from the for_each meta-argument despite the similar name.'
+sidebar:
+  order: 4
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## The idea in one sentence
+
+`count` and `for_each` both create multiple copies of a resource from a single block of configuration, but they address those copies differently — by numeric index versus by stable key — and that difference decides how safely you can change the underlying collection later.
+
+## count: a numeric index per copy
+
+`count` takes a whole number and creates that many near-identical copies of a resource, indexed `0` through `count - 1`. Inside the resource, `count.index` refers to the current copy's position; outside the resource, each copy is addressed with that same numeric index, like `aws_instance.web[0]`.
+
+```hcl
+variable "instance_names" {
+  type    = list(string)
+  default = ["primary", "secondary", "worker"]
+}
+
+resource "aws_instance" "web" {
+  count = length(var.instance_names)
+
+  ami           = var.ami_id
+  instance_type = "t3.micro"
+
+  tags = {
+    Name = var.instance_names[count.index]
+  }
+}
+```
+
+This creates `aws_instance.web[0]` tagged `"primary"`, `aws_instance.web[1]` tagged `"secondary"`, and `aws_instance.web[2]` tagged `"worker"`. That works fine as long as the list never changes shape in the middle.
+
+## count's real weakness: removing a middle item
+
+The problem is specifically about what happens when an item is removed from the middle of `var.instance_names`. Suppose `"secondary"` is deleted, leaving `["primary", "worker"]`. Conceptually, exactly one thing should happen: destroy the instance that was tagged `"secondary"`. But Terraform does not track "the instance tagged secondary" — it tracks index `0`, index `1`, index `2`. After the list shrinks, index `1` now refers to `"worker"` instead of `"secondary"`, and index `2` no longer exists at all. Terraform's plan reflects the index, not the intent:
+
+- `aws_instance.web[1]` is destroyed (it was `"secondary"`) and recreated with the new value at that index (`"worker"`)
+- `aws_instance.web[2]` (`"worker"`, the original) is destroyed, with nothing to replace it
+
+One conceptual removal turns into a cascade of destroy-and-recreate operations for every index after the one that was removed, purely because the addressing scheme is positional. This is the single most common `count` foot-gun, and it gets worse the larger the list and the earlier the removed item sits.
+
+## for_each: a stable key per instance
+
+`for_each` takes a map or a set of strings and creates one resource instance per key, addressed by that key rather than by position — `aws_instance.web["primary"]` instead of `aws_instance.web[0]`.
+
+```hcl
+variable "instance_names" {
+  type    = set(string)
+  default = ["primary", "secondary", "worker"]
+}
+
+resource "aws_instance" "web" {
+  for_each = var.instance_names
+
+  ami           = var.ami_id
+  instance_type = "t3.micro"
+
+  tags = {
+    Name = each.key
+  }
+}
+```
+
+Now remove `"secondary"` from the set. Only `aws_instance.web["secondary"]` is planned for destruction. `aws_instance.web["primary"]` and `aws_instance.web["worker"]` are untouched — their keys never moved, so Terraform has no reason to touch them. This is why `for_each` is the better default for almost anything beyond the simplest fixed-count case where order and identity genuinely do not matter: it makes "remove one thing" mean exactly "destroy one thing," with everything else left alone.
+
+## for expressions: transforming a collection, not repeating a resource
+
+A `for` expression is a different concept that happens to share a name with `for_each` — it is a general-purpose comprehension for transforming one collection into another, and it has nothing to do with creating multiple resources on its own.
+
+```hcl
+locals {
+  upper_names = [for name in var.instance_names : upper(name)]
+
+  name_to_id = { for k, v in aws_instance.web : k => v.id }
+}
+```
+
+`[for name in var.instance_names : upper(name)]` takes a list and produces a new list, one transformed element per input element. `{for k, v in aws_instance.web : k => v.id}` takes the map of resource instances that `for_each` created and produces a plain map from name to instance ID. Neither of these lines creates or destroys a single resource — they are pure data transformations you could use inside a `local`, an `output`, or a variable's `default`. The overlap in the word "for" trips up a lot of newcomers: the `for_each` **meta-argument** repeats a resource block once per element of a collection, while a **`for` expression** transforms a collection's contents into a new collection. They are unrelated features that happen to be spelled similarly.
+
+<Mermaid title="Removing a middle item shifts every count index, but only removes one for_each key" code={countForEachDiagram} />
+
+export const countForEachDiagram = `flowchart TB
+  subgraph count["count: index-based"]
+    c0["index 0 primary"] --> c1["index 1 destroyed then recreated as worker"]
+    c1 --> c2["index 2 destroyed, no replacement"]
+  end
+  subgraph foreach["for_each: key-based"]
+    f0["key primary untouched"]
+    f1["key secondary destroyed"]
+    f2["key worker untouched"]
+  end`;
+
+<Callout title="The one-line takeaway">
+**`count`** creates N copies of a resource indexed `0` through `N - 1` and addressed positionally, like `aws_instance.web[1]` — removing an item from the middle of the underlying list shifts every later index down by one, which Terraform reads as destroy-and-recreate cascades rather than a single clean removal. **`for_each`** creates one instance per key in a map or set of strings, addressed by that stable key like `aws_instance.web["worker"]`, so removing one key destroys only that one resource and leaves every other instance untouched — making it the safer default whenever order and fixed count are not strictly required. A **`for` expression** like `[for x in var.list : upper(x)]` is an unrelated concept despite the shared name: it transforms one collection into another and never creates or destroys a resource on its own.
+</Callout>
+
+export const quizCountForEach = [
+  {
+    q: 'What happens when you remove an item from the middle of a list used with count on a resource?',
+    options: [
+      'Only the resource instance corresponding to the removed item is destroyed, nothing else changes',
+      'Every subsequent numeric index shifts down by one, so Terraform destroys and recreates instances at every index after the removed item, not just the one that was conceptually removed',
+      'Terraform automatically converts the count to a for_each to avoid the problem',
+      'Nothing happens until the next terraform apply after a full state refresh',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Why does for_each avoid the cascading destroy-and-recreate problem that count has?',
+    options: [
+      'for_each does not actually create separate resource instances',
+      'Each resource instance is addressed by a stable key from a map or set, so removing one key only affects the resource instance tied to that specific key',
+      'for_each always creates resources in a fixed, unchangeable order',
+      'for_each recreates every instance on every apply regardless of what changed',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What is the difference between a for expression and the for_each meta-argument, despite the similar name?',
+    options: [
+      'There is no real difference, they are two names for the same feature',
+      'A for expression transforms one collection into another as a pure data operation, while for_each on a resource repeats that resource block once per element of a collection',
+      'A for expression can only be used inside a variable block, and for_each can only be used inside a resource block',
+      'for_each is newer syntax that fully replaces for expressions',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Which meta-argument would you choose for a fixed set of three near-identical logging sidecar resources where order and stable identity do not matter at all?',
+    options: [
+      'count, since it is simpler for a small fixed number when identity truly does not matter',
+      'for_each, always, with no exceptions',
+      'A for expression, since it repeats resources',
+      'Neither, resources cannot be repeated without a module',
+    ],
+    answer: 0,
+  },
+];
+
+<Quiz client:visible id="variables-and-data-flow/count-and-for-each" questions={quizCountForEach} />
+
+<ProgressTracker client:visible id="variables-and-data-flow/count-and-for-each" />

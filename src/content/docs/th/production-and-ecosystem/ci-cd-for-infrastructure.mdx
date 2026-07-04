@@ -1,0 +1,180 @@
+---
+title: 'CI/CD for Infrastructure'
+description: 'plan กับ apply ผูกกับ pull request และ merge ยังไง ทำไม plan ต้อง review ละเอียดกว่า code diff และ OIDC federation แทน long-lived AWS credential ใน CI ได้ยังไง'
+sidebar:
+  order: 1
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## ไอเดียในหนึ่งประโยค
+
+pipeline มาตรฐานสำหรับ infrastructure รัน `plan` อัตโนมัติทุกครั้งที่มี pull request เพื่อให้คน review และเก็บ `apply` ไว้หลัง merge เข้า main branch เท่านั้น — โดยใช้ AWS credential แบบ short-lived ที่ federate ผ่าน OIDC แทน access key แบบ long-lived ที่เก็บไว้ใน CI
+
+## Plan ทุก pull request, apply หลัง merge เท่านั้น
+
+pattern ที่ทีมส่วนใหญ่ลงเอยด้วยกันนั้นคล้าย CI/CD ของ application แต่มีจุดต่างสำคัญตรงว่าแต่ละ stage ทำอะไรจริง ๆ
+
+- **เปิดหรืออัปเดต pull request** → รัน `terraform plan` (หรือ `terragrunt run --all plan` สำหรับ setup ที่มีหลาย unit ใน Terragrunt) แล้ว post diff ที่ได้เป็น comment บน pull request ยังไม่มีอะไรเปลี่ยนบน AWS จริง ๆ ตรงนี้เป็นแค่ dry run ที่หน้าที่เดียวคือทำให้ change ที่เสนอมามองเห็นได้ก่อนที่ใครจะกด approve
+- **merge เข้า main** → รัน `terraform apply` (หรือ `terragrunt run --all apply`) จาก pipeline เอง ไม่ใช่จาก laptop ของใคร สำหรับ production โดยเฉพาะ step นี้มักถูก gate ไว้ด้วย manual approval — reviewer หรือทีมที่กำหนดต้องกด "approve" ใน CI system ก่อนที่ apply job จะรันได้ ถึงแม้ plan จะถูก review ไปแล้วตอน pull request
+
+```yaml
+name: terraform
+
+on:
+  pull_request:
+    paths:
+      - 'infra/**'
+  push:
+    branches:
+      - main
+    paths:
+      - 'infra/**'
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  plan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::111122223333:role/github-actions-terraform
+          aws-region: us-east-1
+      - uses: hashicorp/setup-terraform@v3
+      - run: terragrunt run --all plan -no-color | tee plan.txt
+      - run: gh pr comment ${{ github.event.pull_request.number }} --body-file plan.txt
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  apply:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::111122223333:role/github-actions-terraform
+          aws-region: us-east-1
+      - uses: hashicorp/setup-terraform@v3
+      - run: terragrunt run --all apply --non-interactive
+```
+
+บรรทัด `environment: production` คือตัวที่ทำให้เกิด manual approval gate — GitHub Actions จะกัน `apply` job ไว้จนกว่าคนที่มีสิทธิ์บน environment นั้นจะ approve run นี้ สังเกตว่าไม่มี job ไหน checkout AWS access key ที่เก็บไว้เลย ทั้งสอง job assume role ผ่าน OIDC ซึ่งจะพูดถึงต่อไป
+
+## ทำไม plan ต้อง review ละเอียดกว่า code diff ทั่วไป
+
+pull request ของ application code จะถูก review เรื่อง logic, test, และ style — worst case คือ bug หลุดไปแล้วต้อง roll back แต่ infrastructure `apply` ทำอะไรที่ code deploy ทำไม่ได้ คือทำลาย resource จริงที่มี state บน AWS แล้วสร้างขึ้นใหม่ทั้งหมด บางครั้งแค่เพราะ change บรรทัดเดียว
+
+Terraform เรียกสิ่งนี้ว่า **forced replacement** argument บางตัวของ resource บางประเภทอัปเดตแบบ in place ไม่ได้ — เปลี่ยนมันแปลว่า provider ไม่มี API call สำหรับ "แก้ attribute นี้" มีแต่ "ทำลายแล้วสร้างใหม่" `identifier` ของ RDS instance, `availability_zone` ของ EBS volume หรือแม้แต่ชื่อของ resource เองใน provider บางตัวก็เข้าข่ายนี้ทั้งนั้น เมื่อเจอแบบนี้ `terraform plan` จะทำเครื่องหมาย resource นั้นด้วย `-/+` แทนที่จะเป็น `~` แบบ in-place
+
+```bash
+# terraform plan output — this is the line to stop and read carefully
+  # aws_db_instance.main must be replaced
+-/+ resource "aws_db_instance" "main" {
+      ~ identifier     = "app-db" -> "app-db-renamed" # forces replacement
+        engine         = "postgres"
+        instance_class = "db.t3.micro"
+    }
+```
+
+`-/+` บน resource ที่มี state อย่าง database หรือ persistent volume แปลว่าอาจมี data loss จริงหรือ downtime จริงทันทีที่มีคนกด approve — resource เก่าหายไปก่อนที่ resource ใหม่จะมีอยู่ด้วยซ้ำ นี่คือเหตุผลที่ review infrastructure plan จะ skim ผ่าน ๆ ไม่ได้ reviewer ต้องสแกนหาบรรทัด `-/+` โดยเฉพาะ แล้วถามว่า replacement นั้น expected และ safe หรือเปล่า ไม่ใช่แค่อ่าน plan แบบเดียวกับที่อ่าน code diff เพื่อดู style กับ logic
+
+## OIDC credential แบบ short-lived แทน access key ที่เก็บไว้
+
+pipeline รุ่นเก่าเก็บ AWS access key กับ secret แบบ long-lived ไว้เป็น CI secret แล้ว export เป็น environment variable ก่อนรันทุกครั้ง key นั้นใช้ได้ทั้ง `plan` และ `apply` เหมือนกันหมด ซึ่งนั่นแหละคือปัญหา ถ้ามันหลุดออกไปเมื่อไหร่ — จาก log ที่ config ผิด, dependency ที่ถูก compromise, หรือ workflow file ที่ echo environment variable ออกมา — มันก็ยังใช้งานได้ต่อไปจนกว่าจะมีคน rotate หรือ revoke ด้วยมือ
+
+practice ปัจจุบันแทนที่ key นั้นด้วย **OIDC federation** GitHub Actions ส่ง identity token แบบ short-lived ที่ sign ด้วย cryptographic ให้ AWS ได้ในทุก workflow run IAM OIDC identity provider ใน AWS account เชื่อถือ token issuer ของ GitHub และ trust policy ของ IAM role อนุญาตเฉพาะ repository และ branch ที่กำหนดให้ assume ได้ `aws-actions/configure-aws-credentials` แลก token นั้นเป็น AWS credential ชั่วคราวที่ scope ไว้กับ role ที่ assume มา อายุเท่ากับ job นั้นเท่านั้น ไม่มากไปกว่านั้น
+
+```yaml
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assume AWS role via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::111122223333:role/github-actions-terraform
+          aws-region: us-east-1
+
+      - name: Terraform plan
+        run: terraform plan
+```
+
+ไม่ต้องมี AWS access key ที่เก็บเป็น CI secret เลยสักตัว — ไม่มีอะไร long-lived ให้หลุด ให้ rotate หรือให้ลืม `permissions: id-token: write` คือตัวที่ทำให้ workflow ขอ identity token นั้นได้ตั้งแต่แรก ถ้าไม่มีบรรทัดนี้ การแลก OIDC ก็ไม่มีอะไรให้ยื่นให้ AWS
+
+<Mermaid title="pull request trigger plan ให้ review, merge เข้า main trigger apply หลัง approval gate, OIDC ส่ง credential แบบ short-lived ให้ทั้งสองฝั่ง" code={cicdPipelineDiagram} />
+
+export const cicdPipelineDiagram = `flowchart LR
+  pr["Pull request"] -->|triggers| plan["terragrunt run --all plan"]
+  plan -->|posted as| comment["PR comment for review"]
+  comment -->|approved and merged| main["Merge to main"]
+  main -->|triggers, gated by approval| apply["terragrunt run --all apply"]
+  oidc["GitHub OIDC provider"] -->|short-lived credentials| plan
+  oidc -->|short-lived credentials| apply`;
+
+<Callout title="สรุปหนึ่งบรรทัด">
+IaC pipeline มาตรฐานรัน **`plan`** ทุก pull request แล้ว post เป็น comment ให้คน review และเก็บ **`apply`** ไว้หลัง merge เข้า main มัก gate ไว้ด้วย manual approval สำหรับ production เพราะ `apply` อาจ trigger **forced replacement** (`-/+` ใน plan คือทำลายแล้วสร้างใหม่) แทนที่จะเป็น update in-place ที่ปลอดภัย การ review infrastructure plan จึงต้องสแกนหาบรรทัดพวกนั้นโดยเฉพาะ ไม่ใช่แค่ skim แบบ code diff และ credential ของ CI ควรมาจาก **OIDC federation** แบบ short-lived (`aws-actions/configure-aws-credentials` assume IAM role ผ่าน OIDC identity provider ของ GitHub) แทน AWS access key แบบ long-lived ที่เก็บเป็น CI secret
+</Callout>
+
+export const quizCicdPipeline = [
+  {
+    q: 'ใน IaC CI/CD pipeline มาตรฐาน อะไรควร trigger terraform plan เทียบกับ terraform apply',
+    options: [
+      'ทั้ง plan และ apply ควรรันทุก pull request',
+      'plan รันอัตโนมัติทุก pull request ที่แตะ infrastructure code เพื่อ review ส่วน apply รันหลัง merge เข้า main เท่านั้น มัก gate ไว้ด้วย approval สำหรับ production',
+      'apply ควรรันบน pull request เพื่อให้ change live ไปก่อน review',
+      'plan กับ apply ควรรันด้วยมือจาก laptop ของ engineer',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'ทำไม infrastructure plan ต้อง review ละเอียดกว่า code diff ของ application ทั่วไป',
+    options: [
+      'infrastructure code สั้นกว่าเสมอ เลย review ใช้เวลาน้อยกว่าอยู่แล้ว',
+      'apply อาจ force resource replacement คือทำลายแล้วสร้าง resource ที่มี state ใหม่ ซึ่งอาจแปลว่ามี data loss หรือ downtime จริง ถ้า -/+ ใน plan ไม่ถูกจับก่อน approve',
+      'terraform plan review ได้แค่คนเดียวเท่านั้น',
+      'review code application กับ review infrastructure plan ทำงานเหมือนกันทุกอย่าง',
+    ],
+    answer: 1,
+  },
+  {
+    q: '-/+ ข้าง resource ใน terraform plan output แปลว่าอะไร',
+    options: [
+      'resource จะถูก update in place โดยไม่มี downtime',
+      'resource ต้องถูกทำลายแล้วสร้างใหม่ เพราะ argument ที่เปลี่ยนไป force ให้ replace แทนที่จะ update in place',
+      'Terraform หาไม่ได้ว่า resource เปลี่ยนไปหรือเปล่า',
+      'resource จะถูก import จาก infrastructure ที่มีอยู่แล้ว',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'ทำไม OIDC federation ถึงดีกว่า AWS access key แบบ long-lived ที่เก็บเป็น CI secret',
+    options: [
+      'OIDC federation ช้ากว่าแต่ปลอดภัยกว่า เลยใช้เฉพาะ production เท่านั้น',
+      'มันออก credential แบบ short-lived และ scope เฉพาะแต่ละ run โดยให้ CI system assume IAM role ผ่าน identity token ที่เชื่อถือได้ ไม่ต้องเก็บหรือ rotate AWS key แบบ long-lived ใน CI เลย',
+      'OIDC federation ทำให้ไม่ต้องมี IAM role เลย',
+      'access key แบบ long-lived จำเป็นสำหรับให้ terraform apply ทำงานได้เท่านั้น',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="production-and-ecosystem/ci-cd-for-infrastructure" questions={quizCicdPipeline} />
+
+<ProgressTracker client:visible id="production-and-ecosystem/ci-cd-for-infrastructure" />

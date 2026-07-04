@@ -1,0 +1,150 @@
+---
+title: 'Count and For Each'
+description: 'สร้าง resource หลาย copy ด้วย count และ for_each ทำไม count แบบ index ถึงพังเมื่อลบ item กลาง list และ for expression ต่างจาก for_each meta-argument อย่างไรทั้งที่ชื่อคล้ายกัน'
+sidebar:
+  order: 4
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## ไอเดียในหนึ่งประโยค
+
+`count` กับ `for_each` ต่างสร้าง resource หลาย copy จาก config block เดียว แต่ทั้งสองอ้างอิง copy เหล่านั้นต่างกัน — ด้วย numeric index กับด้วย stable key — และความต่างตรงนี้เองที่กำหนดว่าจะแก้ collection ด้านหลังได้ปลอดภัยแค่ไหนในภายหลัง
+
+## count: numeric index ต่อหนึ่ง copy
+
+`count` รับจำนวนเต็มมาแล้วสร้าง resource copy ที่เกือบเหมือนกันตามจำนวนนั้น index ตั้งแต่ `0` ถึง `count - 1` ภายใน resource `count.index` อ้างถึงตำแหน่งของ copy ปัจจุบัน ส่วนภายนอก resource แต่ละ copy ถูกอ้างอิงด้วย numeric index ตัวเดียวกันนั้น เช่น `aws_instance.web[0]`
+
+```hcl
+variable "instance_names" {
+  type    = list(string)
+  default = ["primary", "secondary", "worker"]
+}
+
+resource "aws_instance" "web" {
+  count = length(var.instance_names)
+
+  ami           = var.ami_id
+  instance_type = "t3.micro"
+
+  tags = {
+    Name = var.instance_names[count.index]
+  }
+}
+```
+
+โค้ดนี้สร้าง `aws_instance.web[0]` tag ว่า `"primary"`, `aws_instance.web[1]` tag ว่า `"secondary"` และ `aws_instance.web[2]` tag ว่า `"worker"` ใช้งานได้ดีตราบใดที่ list ไม่เปลี่ยนรูปร่างตรงกลาง
+
+## จุดอ่อนจริงของ count: ลบ item กลาง list
+
+ปัญหาเกิดขึ้นเฉพาะตอนที่ลบ item ออกจากกลาง `var.instance_names` สมมติลบ `"secondary"` ออก เหลือ `["primary", "worker"]` ในทางความคิด ควรมีแค่เรื่องเดียวเกิดขึ้น คือทำลาย instance ที่ tag เป็น `"secondary"` แต่ Terraform ไม่ได้ track "instance ที่ tag เป็น secondary" มัน track index `0`, index `1`, index `2` พอ list สั้นลง index `1` ตอนนี้กลายเป็นอ้างถึง `"worker"` แทน `"secondary"` และ index `2` ก็ไม่มีอยู่แล้วเลย plan ของ Terraform สะท้อน index ไม่ใช่ intent:
+
+- `aws_instance.web[1]` ถูกทำลาย (เดิมคือ `"secondary"`) แล้วสร้างใหม่ด้วยค่าใหม่ที่ index นั้น (`"worker"`)
+- `aws_instance.web[2]` (`"worker"` ตัวเดิม) ถูกทำลาย โดยไม่มีอะไรมาแทนที่
+
+การลบหนึ่งอย่างในทางความคิด กลายเป็น cascade ของ destroy-and-recreate สำหรับทุก index หลังจากตัวที่ถูกลบ เพียงเพราะ scheme การอ้างอิงเป็นแบบ positional นี่คือ foot-gun ของ `count` ที่พบบ่อยที่สุด และยิ่งแย่ลงเมื่อ list ยิ่งยาวและ item ที่ลบยิ่งอยู่ต้น ๆ
+
+## for_each: stable key ต่อหนึ่ง instance
+
+`for_each` รับ map หรือ set ของ string มาแล้วสร้าง resource instance หนึ่งตัวต่อหนึ่ง key อ้างอิงด้วย key นั้นแทนที่จะเป็นตำแหน่ง — `aws_instance.web["primary"]` แทนที่จะเป็น `aws_instance.web[0]`
+
+```hcl
+variable "instance_names" {
+  type    = set(string)
+  default = ["primary", "secondary", "worker"]
+}
+
+resource "aws_instance" "web" {
+  for_each = var.instance_names
+
+  ami           = var.ami_id
+  instance_type = "t3.micro"
+
+  tags = {
+    Name = each.key
+  }
+}
+```
+
+ทีนี้ลบ `"secondary"` ออกจาก set มีแค่ `aws_instance.web["secondary"]` เท่านั้นที่ถูก plan ให้ทำลาย `aws_instance.web["primary"]` กับ `aws_instance.web["worker"]` ไม่ถูกแตะเลย เพราะ key ของมันไม่เคยขยับ Terraform เลยไม่มีเหตุผลต้องไปยุ่งกับมัน นี่คือเหตุผลที่ `for_each` เป็นตัวเลือก default ที่ดีกว่าสำหรับเกือบทุกกรณี ยกเว้นกรณีง่ายที่สุดที่ count คงที่และลำดับกับ identity ไม่สำคัญจริง ๆ มันทำให้ "ลบหนึ่งอย่าง" แปลว่า "ทำลายหนึ่งอย่าง" พอดี โดยที่อย่างอื่นไม่ถูกแตะเลย
+
+## for expression: แปลง collection ไม่ใช่ทำซ้ำ resource
+
+`for` expression เป็นคนละแนวคิดที่บังเอิญมีชื่อคล้ายกับ `for_each` มันเป็น comprehension ทั่วไปสำหรับแปลง collection หนึ่งไปเป็นอีก collection หนึ่ง และไม่เกี่ยวอะไรกับการสร้าง resource หลายตัวด้วยตัวมันเอง
+
+```hcl
+locals {
+  upper_names = [for name in var.instance_names : upper(name)]
+
+  name_to_id = { for k, v in aws_instance.web : k => v.id }
+}
+```
+
+`[for name in var.instance_names : upper(name)]` รับ list มาแล้วผลิต list ใหม่ หนึ่ง element ที่แปลงแล้วต่อหนึ่ง element ที่รับเข้ามา `{for k, v in aws_instance.web : k => v.id}` รับ map ของ resource instance ที่ `for_each` สร้างไว้ มาผลิตเป็น plain map จากชื่อไปเป็น instance ID ทั้งสองบรรทัดนี้ไม่ได้สร้างหรือทำลาย resource สักตัวเดียว มันเป็น data transformation ล้วน ๆ ที่เอาไปใช้ใน `local`, `output` หรือ default ของ variable ได้ คำว่า "for" ที่ซ้ำกันทำให้คนใหม่ ๆ สับสนบ่อยมาก **`for_each`** meta-argument ทำซ้ำ resource block หนึ่งครั้งต่อหนึ่ง element ของ collection ในขณะที่ **`for` expression** แปลง content ของ collection ให้เป็น collection ใหม่ ทั้งสองคือ feature คนละตัวที่บังเอิญสะกดคล้ายกันเท่านั้น
+
+<Mermaid title="Removing a middle item shifts every count index, but only removes one for_each key" code={countForEachDiagram} />
+
+export const countForEachDiagram = `flowchart TB
+  subgraph count["count: index-based"]
+    c0["index 0 primary"] --> c1["index 1 destroyed then recreated as worker"]
+    c1 --> c2["index 2 destroyed, no replacement"]
+  end
+  subgraph foreach["for_each: key-based"]
+    f0["key primary untouched"]
+    f1["key secondary destroyed"]
+    f2["key worker untouched"]
+  end`;
+
+<Callout title="The one-line takeaway">
+**`count`** สร้าง resource N copy โดย index ตั้งแต่ `0` ถึง `N - 1` อ้างอิงแบบ positional เช่น `aws_instance.web[1]` — การลบ item ออกจากกลาง list ทำให้ index ทุกตัวหลังจากนั้นขยับลงหนึ่ง ซึ่ง Terraform อ่านเป็น cascade ของ destroy-and-recreate แทนที่จะเป็นการลบสะอาด ๆ ครั้งเดียว **`for_each`** สร้าง instance หนึ่งตัวต่อหนึ่ง key ใน map หรือ set ของ string อ้างอิงด้วย stable key เช่น `aws_instance.web["worker"]` การลบ key เดียวเลยทำลายแค่ resource ตัวนั้น instance อื่นทั้งหมดไม่ถูกแตะเลย ทำให้มันเป็น default ที่ปลอดภัยกว่าเวลาที่ลำดับกับ fixed count ไม่ใช่ requirement ที่เข้มงวด **`for` expression** อย่าง `[for x in var.list : upper(x)]` เป็นคนละแนวคิดกันแม้ชื่อจะคล้ายกัน มันแปลง collection หนึ่งไปเป็นอีก collection และไม่สร้างหรือทำลาย resource ด้วยตัวมันเองเลย
+</Callout>
+
+export const quizCountForEach = [
+  {
+    q: 'เกิดอะไรขึ้นเมื่อลบ item ออกจากกลาง list ที่ใช้กับ count บน resource',
+    options: [
+      'มีแค่ resource instance ที่ตรงกับ item ที่ถูกลบเท่านั้นที่ถูกทำลาย อย่างอื่นไม่เปลี่ยนแปลง',
+      'numeric index ทุกตัวหลังจากนั้นขยับลงหนึ่ง ทำให้ Terraform ทำลายและสร้างใหม่ instance ที่ทุก index หลังจาก item ที่ถูกลบ ไม่ใช่แค่ตัวที่ถูกลบในทางความคิด',
+      'Terraform แปลง count เป็น for_each ให้อัตโนมัติเพื่อหลีกเลี่ยงปัญหานี้',
+      'ไม่มีอะไรเกิดขึ้นจนกว่าจะ refresh state เต็มรูปแบบใน terraform apply ครั้งถัดไป',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'ทำไม for_each ถึงไม่มีปัญหา destroy-and-recreate แบบ cascade เหมือน count',
+    options: [
+      'for_each ไม่ได้สร้าง resource instance แยกกันจริง ๆ',
+      'แต่ละ resource instance ถูกอ้างอิงด้วย stable key จาก map หรือ set การลบ key หนึ่งตัวจึงกระทบแค่ resource instance ที่ผูกกับ key นั้นเท่านั้น',
+      'for_each สร้าง resource ตามลำดับคงที่เปลี่ยนไม่ได้เสมอ',
+      'for_each สร้าง instance ทุกตัวใหม่ทุกครั้งที่ apply ไม่ว่าจะเปลี่ยนอะไรหรือไม่',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'for expression ต่างจาก for_each meta-argument อย่างไรทั้งที่ชื่อคล้ายกัน',
+    options: [
+      'ไม่มีความต่างจริง ๆ เป็นชื่อสองชื่อของ feature เดียวกัน',
+      'for expression แปลง collection หนึ่งไปเป็นอีก collection แบบ pure data operation ส่วน for_each บน resource ทำซ้ำ resource block นั้นหนึ่งครั้งต่อหนึ่ง element ของ collection',
+      'for expression ใช้ได้แค่ใน variable block ส่วน for_each ใช้ได้แค่ใน resource block',
+      'for_each คือ syntax ใหม่ที่มาแทน for expression ทั้งหมด',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'ควรเลือก meta-argument ไหนสำหรับ logging sidecar resource สามตัวที่เกือบเหมือนกันแบบตายตัว โดยลำดับและ identity ที่คงที่ไม่สำคัญเลย',
+    options: [
+      'count เพราะง่ายกว่าสำหรับจำนวนคงที่น้อย ๆ เมื่อ identity ไม่สำคัญจริง ๆ',
+      'for_each เสมอ ไม่มีข้อยกเว้น',
+      'for expression เพราะมันทำซ้ำ resource ได้',
+      'ไม่เลือกอันไหนเลย เพราะ resource ทำซ้ำไม่ได้ถ้าไม่มี module',
+    ],
+    answer: 0,
+  },
+];
+
+<Quiz client:visible id="variables-and-data-flow/count-and-for-each" questions={quizCountForEach} />
+
+<ProgressTracker client:visible id="variables-and-data-flow/count-and-for-each" />

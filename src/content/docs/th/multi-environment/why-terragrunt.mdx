@@ -1,0 +1,136 @@
+---
+title: 'Why Terragrunt'
+description: 'ช่องว่างที่ Terraform workspace กับ directory-per-environment ทิ้งไว้ และ Terragrunt ปิดมันได้ยังไงด้วยการห่อ terraform binary จริง'
+sidebar:
+  order: 4
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## ไอเดียในหนึ่งประโยค
+
+Terragrunt คือ wrapper บาง ๆ ที่ห่อรอบ `terraform` (หรือ `tofu`) binary จริง คอย generate และจัดการ boilerplate ของ backend, provider, และ input ที่ซ้ำกันข้าม environment ทำให้ได้ทั้ง configuration ที่ DRY และ isolation ที่แข็งแรงพร้อมกัน แทนที่จะต้องแลกอย่างใดอย่างหนึ่งไป
+
+## ช่องว่างที่ทั้งสองวิธีของ Terraform เองปิดไม่ได้
+
+สองบทที่แล้วพาไปดูสองคำตอบที่ Terraform เองมีให้กับปัญหา multi-environment และแต่ละคำตอบปิดช่องว่างได้แค่ครึ่งเดียว
+
+- **workspace** เก่งเรื่อง DRY reuse มาก configuration เดียว, backend เดียว, state file หลายชุด แต่ isolation อ่อนแอ ทุก workspace แชร์ backend เดียวกัน, provider configuration เดียวกัน, และโค้ด `.tf` เดียวกัน มีแค่ string ที่ CLI เลือกไว้เป็นตัวแยกเท่านั้น
+- **directory-per-environment** เก่งเรื่อง isolation มาก directory จริง, backend จริง, อาจมี AWS account แยกกันจริงต่อ environment แต่พา duplication กลับมา backend block, provider block, และ argument `source` ของ module จบลงด้วยการ copy-paste แทบทุกตัวอักษรในทุก environment directory
+
+Terraform เปล่า ๆ ไม่มี primitive ระดับ first-class ที่ให้ทั้ง isolation ที่แข็งแรงและ configuration ที่ไม่ duplicate เลยพร้อมกัน เลือก pattern ของ Terraform เองแบบไหนก็ต้องยอมรับจุดอ่อนของอีก pattern หนึ่งเสมอ
+
+## Terragrunt คืออะไรจริง ๆ
+
+Terragrunt คือ **wrapper และ orchestrator** บาง ๆ ที่วางอยู่บน setup Terraform (หรือ OpenTofu) ที่มีอยู่แล้ว มันไม่ได้เพิ่ม resource syntax ใหม่ และไม่ได้แทนที่อะไรข้างใน `modules/app` เลย โค้ด module จริงของคุณไม่เปลี่ยนแปลงเลย ยังเป็น Terraform ธรรมดา เหมือนที่เห็นมาในทุกบทก่อนหน้านี้ สิ่งที่ Terragrunt เพิ่มเข้ามาคือ layer ที่อยู่ข้างบนนั้น รับผิดชอบ boilerplate ที่เพิ่งเห็นสะสมอยู่ใน directory-per-environment pattern
+
+- generate **backend configuration** ของแต่ละ environment จาก definition ศูนย์กลางเดียว แทนที่จะเอา `backend "s3"` block ไปใส่มือในทุก environment directory
+- generate **provider configuration** ของแต่ละ environment ด้วยวิธีเดียวกัน
+- ใส่ **input variable** ของแต่ละ environment ไว้จุดเดียวต่อ environment โดยไม่ต้องทำ boilerplate ของ `module` block รอบ ๆ ซ้ำ
+- เข้าใจ **dependency ordering** เมื่อ infrastructure ถูกแยกเป็นหลาย unit ที่ apply แยกกันอิสระ เช่น unit `vpc` ที่ unit `ec2` ต้องใช้ output จากมัน
+
+Terragrunt unit เล็ก ๆ สำหรับ environment `dev` จากบทที่แล้วหน้าตาเป็นแบบนี้ สังเกตว่า field ของ backend เป็นตัวเดียวกับที่เขียนมือไว้ก่อนหน้านี้เป๊ะ เพียงแต่ตอนนี้ generate มาจาก configuration แทนที่จะ copy-paste
+
+```hcl
+# environments/dev/app/terragrunt.hcl
+remote_state {
+  backend = "s3"
+  generate = {
+    path      = "backend.tf"
+    if_exists = "overwrite"
+  }
+  config = {
+    bucket       = "acme-terraform-state-dev"
+    key          = "app/terraform.tfstate"
+    region       = "us-east-1"
+    use_lockfile = true
+  }
+}
+
+terraform {
+  source = "../../../modules/app"
+}
+
+inputs = {
+  environment    = "dev"
+  instance_type  = "t3.micro"
+  instance_count = 1
+}
+```
+
+## สิ่งที่ Terragrunt ไม่ใช่
+
+ตรงนี้ควรพูดให้ชัด เพราะเป็นความเข้าใจผิดที่พบบ่อยที่สุด Terragrunt ไม่ใช่ fork ของ Terraform และไม่ได้ compile configuration ของคุณไปเป็นภาษา infrastructure-as-code แบบอื่น ทุกคำสั่งของ Terragrunt สุดท้ายแล้ว shell out ไปเรียกคำสั่ง `terraform` หรือ `tofu` จริง ๆ ข้างใต้เสมอ รันกับ backend และ provider configuration ตัวเดียวกับที่ Terragrunt เพิ่ง assemble ให้มัน สั่ง `terragrunt plan` แล้วข้างใต้คือ `terraform plan` ธรรมดาที่รันอยู่ หน้าที่ของ Terragrunt จบแค่การ generate input แล้ว orchestrate ว่าคำสั่งจริงนั้นควรรันตอนไหน
+
+## ปัญหา dependency-ordering ที่มันแก้ได้ด้วย
+
+Terraform configuration เดียวเข้าใจลำดับ dependency ระหว่าง resource ภายใน state file เดียวอยู่แล้ว ถ้า security group อ้างถึง ID ของ VPC ตัวหนึ่ง Terraform คิดเองได้ว่าต้องสร้าง VPC ก่อน อัตโนมัติ แต่ graph นั้นหยุดอยู่ที่ขอบของ state file เดียว ทันทีที่ infrastructure ถูกแยกเป็นหลาย unit ที่ apply แยกกันอิสระ เช่น unit `vpc` ที่มี state ของตัวเอง กับ unit `ec2` แยกที่มี state ของตัวเองซึ่งต้องใช้ subnet ID ของ VPC ไม่มีอะไรใน `terraform apply` ของแต่ละอันที่รู้เลยว่าอีก unit ต้องรันก่อน เพราะแต่ละอันคือ process คนละตัวที่ทำงานบน state file คนละไฟล์กันเลย
+
+Terragrunt ปิดช่องว่างนั้นด้วย `dependency` block ที่อ่าน output ของ unit อื่น และ run queue ที่ apply unit ตามลำดับที่ถูกต้องให้อัตโนมัติ
+
+```bash
+# Terragrunt determines vpc must run before ec2, then applies both in order
+terragrunt run --all apply
+```
+
+<Mermaid title="Workspaces (DRY, weak isolation) and directory-per-environment (isolated, duplicated) both leave a gap; Terragrunt wraps the real terraform binary to close it" code={terragruntGapDiagram} />
+
+export const terragruntGapDiagram = `flowchart LR
+  ws["Workspaces: DRY, weak isolation"] --> gap["The gap: no primitive gives both at once"]
+  dirEnv["Directory-per-environment: isolated, duplicated boilerplate"] --> gap
+  gap --> tg["Terragrunt: generates config, orders units"]
+  tg --> tf["Real terraform / tofu binary"]`;
+
+<Callout title="สรุปหนึ่งบรรทัด">
+Terraform workspace แก้ DRY reuse ได้ดีแต่ isolation อ่อนแอ directory-per-environment แก้ isolation ได้ดีแต่พา duplication ของ boilerplate กลับมา Terraform เปล่า ๆ ไม่มี primitive ที่ปิดทั้งสองช่องว่างพร้อมกัน **Terragrunt** คือ wrapper และ orchestrator บาง ๆ ไม่ใช่ fork ของ Terraform และไม่ใช่ภาษา IaC ใหม่ ที่ generate backend, provider, และ input configuration จาก definition ศูนย์กลางเดียวแทนที่จะ copy-paste boilerplate และทุกคำสั่งของ Terragrunt สุดท้าย shell out ไปเรียกคำสั่ง `terraform`/`tofu` จริงข้างใต้เสมอ มันยังเข้าใจ **dependency ordering** ข้าม unit หลายตัวที่ apply แยกกันอิสระด้วย state file คนละไฟล์ เช่น unit `vpc` ที่ unit `ec2` ต้องพึ่งพา ซึ่ง graph ภายในของ Terraform configuration เดียวมองไม่เห็นข้าม เพราะ graph นั้นหยุดที่ขอบของ state file เดียว
+</Callout>
+
+export const quizWhyTerragrunt = [
+  {
+    q: 'ช่องว่างอะไรที่ยังเหลืออยู่หลังใช้ Terraform workspace หรือ directory-per-environment pattern อย่างใดอย่างหนึ่งเพียงลำพัง',
+    options: [
+      'ทั้งสองวิธีแก้ DRY reuse และ isolation ที่แข็งแรงได้พร้อมกันเต็มที่ จึงไม่มีช่องว่างเหลือ',
+      'ไม่มีวิธีไหนให้ทั้ง configuration ที่ DRY และ isolation ที่แข็งแรงพร้อมกัน workspace แลก isolation ไปกับ reuse ส่วน directory-per-environment แลก reuse ไปกับ isolation',
+      'workspace ใช้กับ S3 backend ไม่ได้เลย',
+      'directory-per-environment ใช้ shared module ไม่ได้',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Terragrunt คืออะไรกันแน่ อธิบายให้ถูกต้อง',
+    options: [
+      'fork ของ Terraform ที่มี resource syntax และ state format ของตัวเอง',
+      'wrapper และ orchestrator บาง ๆ ที่ห่อรอบ terraform หรือ tofu binary จริง generate backend, provider, และ input configuration และจัดการ dependency ordering โดยไม่เปลี่ยนวิธีเขียนโค้ด module .tf เลย',
+      'ตัวแทน HCL ที่ compile ไปเป็นภาษา infrastructure-as-code แบบอื่น',
+      'managed cloud service ที่แทนที่ความจำเป็นต้องมี Terraform backend ไปเลย',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Terragrunt มักถูกเข้าใจผิดว่าเป็นอะไร ทั้งที่จริง ๆ แล้วมันไม่ใช่',
+    options: [
+      'linter สำหรับ error ของ HCL syntax',
+      'ภาษา infrastructure-as-code ใหม่ หรือ fork/ตัวแทนของ Terraform ทั้งที่จริง ๆ ทุกคำสั่ง shell out ไปเรียกคำสั่ง terraform/tofu จริงข้างใต้เสมอ',
+      'testing framework สำหรับ Terraform module',
+      'เครื่องมือประเมิน cost ของ AWS resource',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Terragrunt แก้ปัญหาแบบไหนที่ dependency graph ภายในของ Terraform configuration เดียวแก้ไม่ได้',
+    options: [
+      'จัด format โค้ด HCL ให้เหมือนกันทั้งทีม',
+      'จัดลำดับ apply ข้าม unit หลายตัวที่ apply แยกกันอิสระด้วย state file คนละไฟล์ เช่น unit vpc ที่ unit ec2 ต้องใช้ output จากมัน เพราะ graph ของ configuration เดียวมองเห็นแค่ dependency ภายใน state file ของตัวเองเท่านั้น',
+      'เข้ารหัส state file ตอนเก็บไว้',
+      'แก้ conflict ของ provider version ให้อัตโนมัติ',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="multi-environment/why-terragrunt" questions={quizWhyTerragrunt} />
+
+<ProgressTracker client:visible id="multi-environment/why-terragrunt" />

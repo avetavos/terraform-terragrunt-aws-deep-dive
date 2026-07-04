@@ -1,0 +1,119 @@
+---
+title: 'Dependencies Between Units'
+description: 'How a dependency block passes outputs from one unit into another unit across separate state, plus mock_outputs and apply ordering.'
+sidebar:
+  order: 3
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## The idea in one sentence
+
+A `dependency` block lets one unit read another unit's outputs across the state boundary that separates them, and Terragrunt uses those same blocks to work out the order units must be applied in.
+
+## Why module composition is not enough anymore
+
+In the Modules module you saw output-to-input composition: one module's output feeding straight into another module's input argument, inside a single `main.tf`, evaluated as one Terraform plan against one state file. That works because both modules are part of the same apply.
+
+Terragrunt units break that assumption on purpose — a `vpc` unit and an `ec2` unit each have their own `terragrunt.hcl` and their own separate state file, applied independently. `module.vpc.outputs.vpc_id`, referenced directly the way it was inside a single Terraform config, simply does not exist from the `ec2` unit's point of view; there is no shared configuration file for that reference to live inside. Something has to read across that state boundary explicitly, and that something is a `dependency` block.
+
+## dependency: reading across the state boundary
+
+```hcl
+# ec2/terragrunt.hcl
+include "root" {
+  path = find_in_parent_folders("root.hcl")
+}
+
+terraform {
+  source = "git::git@github.com:acme/infrastructure-modules.git//ec2?ref=v1.4.0"
+}
+
+dependency "vpc" {
+  config_path = "../vpc"
+
+  mock_outputs = {
+    vpc_id = "mock-vpc-id"
+  }
+
+  mock_outputs_allowed_terraform_commands = ["plan"]
+}
+
+inputs = {
+  vpc_id = dependency.vpc.outputs.vpc_id
+}
+```
+
+`config_path` points at the other unit's directory — not a Terraform module, a Terragrunt unit. Before running, Terragrunt runs `terraform output` against that unit's real state and exposes every output it finds as `dependency.vpc.outputs.<name>`, available anywhere in this unit's config, including inside `inputs`.
+
+## mock_outputs: letting plan succeed before the dependency exists
+
+`dependency.vpc.outputs.vpc_id` only has a real value once the `vpc` unit has actually been applied at least once. Two situations break that assumption: standing up a brand-new environment for the first time, where nothing has been applied yet, and CI validating a pull request that only touched the `ec2` unit's files, where nobody wants a plan to fail just because some unrelated unit has not been applied in that particular environment.
+
+`mock_outputs` covers exactly this gap. It supplies placeholder values Terragrunt substitutes in whenever the real outputs are not available, and `mock_outputs_allowed_terraform_commands` restricts which commands are allowed to fall back to them — `["plan"]` above means a `plan` on `ec2` succeeds using `vpc_id = "mock-vpc-id"` even with no real `vpc` state yet, while an `apply` still refuses to run against a fake value and forces the real dependency to be applied first.
+
+## How Terragrunt orders units automatically
+
+Terraform already computes an execution order inside a single state — its own dependency graph between individual resources. A `dependency` block hands Terragrunt the equivalent information one level higher, between whole units: since `ec2` declares a `dependency` on `vpc`, Terragrunt knows `vpc` has to be applied first. Multiply this across a real tree of a dozen units, and Terragrunt builds a full graph from every `dependency` block it finds, then walks it in the correct order for any command that touches more than one unit at once — covered fully in the next lesson — without anyone maintaining that ordering by hand.
+
+<Mermaid title="A dependency block passing vpc outputs into ec2 inputs" code={dependencyDiagram} />
+
+export const dependencyDiagram = `flowchart LR
+  vpcstate["vpc unit state (applied separately)"] --> vpcout["vpc outputs: vpc_id"]
+  vpcout --> dep["ec2 terragrunt.hcl: dependency vpc block"]
+  dep --> ecin["ec2 inputs: vpc_id = dependency.vpc.outputs.vpc_id"]
+  mock["mock_outputs: vpc_id = mock-vpc-id"] -.->|lets plan succeed before vpc is applied| dep`;
+
+<Callout title="The one-line takeaway">
+Module composition (output feeding input) works only inside one Terraform apply against one state file; two Terragrunt units each keep separate state, so a **dependency** block is what closes that gap, exposing another unit's real outputs as `dependency.<name>.outputs.<output>` for use anywhere in the current unit including its `inputs`. **mock_outputs** (scoped with `mock_outputs_allowed_terraform_commands`) lets commands like `plan` succeed with placeholder values before the real dependency has ever been applied, while `apply` still requires the real thing. Terragrunt reads every `dependency` block across a tree of units to build a graph one level above Terraform's own per-resource DAG, and uses it to compute the correct apply order automatically.
+</Callout>
+
+export const quizDependency = [
+  {
+    q: 'Why is output-to-input module composition from the Modules module not directly enough for two Terragrunt units?',
+    options: [
+      'Terragrunt units cannot have outputs at all',
+      'Each unit has its own separate state and its own independent apply, so there is no single shared configuration for one unit output to be referenced directly from inside another',
+      'Module composition only works for AWS resources',
+      'Units cannot be applied in the same AWS account',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What does mock_outputs provide?',
+    options: [
+      'Real output values fetched from a cached previous apply',
+      'Placeholder values used when the real dependency outputs are not available yet, useful for a plan on a brand-new environment or in CI for a pull request that only touched one unit files',
+      'A way to permanently skip applying a dependency',
+      'A list of AWS regions a unit is allowed to run in',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'How does Terragrunt determine the correct apply order across multiple dependent units?',
+    options: [
+      'Alphabetically by directory name',
+      'By building a graph from every dependency block across the units, one level above Terraform own per-resource DAG within a single state',
+      'Units are always applied in the order they are listed in root.hcl',
+      'The order is fixed and cannot be changed by dependency blocks',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What does mock_outputs_allowed_terraform_commands control?',
+    options: [
+      'Which AWS IAM permissions the unit needs',
+      'Which commands, such as plan, are allowed to fall back to mock_outputs instead of requiring the real dependency to already be applied',
+      'Which Terraform version the unit uses',
+      'Whether the dependency block is included in run --all at all',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="terragrunt-fundamentals/dependencies-between-units" questions={quizDependency} />
+
+<ProgressTracker client:visible id="terragrunt-fundamentals/dependencies-between-units" />

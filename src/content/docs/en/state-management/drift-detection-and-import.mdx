@@ -1,0 +1,161 @@
+---
+title: 'Drift Detection and Import'
+description: 'How Terraform surfaces manual changes made outside its control, and how to bring existing AWS resources under Terraform management with import.'
+sidebar:
+  order: 3
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## The idea in one sentence
+
+**Configuration drift** happens when reality changes outside Terraform, and **import** is how you bring a real resource that already exists into Terraform's state without recreating it.
+
+## Detecting drift
+
+State is only a recorded snapshot of the real world at the moment of the last `apply`. Nothing stops someone from opening the AWS Console and changing a resource directly — bumping an EC2 instance's tag, resizing an RDS instance, or opening a security group port by hand. Terraform has no way to know that happened until it looks again.
+
+```hcl
+resource "aws_instance" "web" {
+  ami           = "ami-0abcdef1234567890"
+  instance_type = "t3.micro"
+
+  tags = {
+    Name = "web-server"
+  }
+}
+```
+
+Suppose a teammate edits that instance's `Name` tag in the console to `"web-server-old"`, outside of any Terraform run. The next time anyone runs `terraform plan`, Terraform refreshes its view of the real resource, notices the tag no longer matches the configuration, and shows a diff — it proposes changing the tag back to `"web-server"`, because as far as Terraform is concerned the configuration is the source of truth and the console edit is drift to be corrected.
+
+```bash
+terraform plan
+
+# ~ resource "aws_instance" "web" {
+#     ~ tags = {
+#         ~ "Name" = "web-server-old" -> "web-server"
+#       }
+#   }
+```
+
+That is the normal, expected way `plan` surfaces drift — as a proposed change that will overwrite reality with the configuration the next time you `apply`. Sometimes you want the opposite: you want Terraform to just update its own records to match reality, without touching any actual infrastructure. That is what `-refresh-only` is for:
+
+```bash
+terraform apply -refresh-only
+```
+
+This mode refreshes state from the real AWS resources and shows you what changed, then asks you to confirm writing those changes into `terraform.tfstate` — but it never modifies AWS itself. It is the right tool when the drift was intentional and you have decided the console change should win, or when you need to update your mental model of what state currently holds before deciding whether to fix the configuration or accept reality.
+
+## Bringing existing resources under management with import
+
+Drift assumes Terraform was already managing the resource. A different, related problem is a resource that exists in AWS but was never created by Terraform at all — maybe it predates your Terraform adoption, or someone clicked it into existence in the console during an outage. `terraform import` is the CLI command that associates that real resource with a resource address in your configuration:
+
+```bash
+terraform import aws_instance.web i-0123456789abcdef0
+```
+
+Running that command only writes a state entry — it maps `aws_instance.web` to the real instance ID and pulls in all of that instance's current attributes. It does **not** write the matching `resource "aws_instance" "web" { ... }` block for you. You still have to hand-write HCL that matches the real resource's attributes closely enough that the next `plan` comes back clean. If your configuration disagrees with reality after importing, `plan` will show the same kind of diff drift produces, and you will need to adjust your HCL — not the real resource — until they line up.
+
+## The declarative import block
+
+Terraform 1.5 introduced a second way to import, written directly into your `.tf` files as a first-class block instead of a one-off CLI invocation:
+
+```hcl
+import {
+  to = aws_instance.web
+  id = "i-0123456789abcdef0"
+}
+```
+
+This does the same underlying job as `terraform import`, but with an important difference in workflow. The CLI command runs immediately and mutates state the moment you invoke it — there is no preview, and nothing to review before it happens. The `import` block, by contrast, is just configuration: it shows up as a planned action the next time you run `terraform plan`, alongside any other changes, before anything actually happens.
+
+```bash
+terraform plan
+
+# Terraform will perform the following actions:
+#
+#   # aws_instance.web will be imported
+#     resource "aws_instance" "web" {
+#         id            = "i-0123456789abcdef0"
+#         instance_type = "t3.micro"
+#         ...
+#     }
+```
+
+That makes the `import` block the preferred approach wherever it is available: it is plannable, reviewable in a pull request like any other configuration change, and repeatable across environments, rather than being an immediate side effect that someone has to remember to run by hand on every machine that needs it. You still need to write the matching `resource` block yourself either way — the block only tells Terraform which real object to associate with which address.
+
+## Reorganizing state without touching real infrastructure
+
+Two more commands round out the state-editing toolkit, both of which change only Terraform's bookkeeping and never touch AWS:
+
+```bash
+# Move a resource to a new address in state, e.g. after refactoring into a module
+terraform state mv aws_instance.web module.compute.aws_instance.web
+
+# Stop tracking a resource in state, without destroying the real object
+terraform state rm aws_instance.web
+```
+
+`terraform state mv` is what you reach for when you restructure your configuration — say, moving a resource into a module — and do not want Terraform to see that as "destroy the old one, create a new one." It updates the address in state to match the new location in your HCL, and the real AWS resource is never touched. `terraform state rm` is the opposite direction of `import`: it deletes a resource's entry from state so Terraform forgets about it entirely, but the real object in AWS keeps running exactly as it was. That is useful when you want to hand a resource off to a different Terraform configuration, or deliberately stop managing something without deleting it.
+
+<Mermaid title="A manual console edit is caught as drift by plan, while an existing untracked resource is brought in via import" code={driftImportDiagram} />
+
+export const driftImportDiagram = `flowchart LR
+  console["Manual change in AWS Console"] --> drift["Resource now disagrees with config"]
+  drift -->|terraform plan| diff["Diff shown: drift detected"]
+  existing["Existing untracked AWS resource"] -->|terraform import or import block| state["Resource added to state"]
+  state -->|next plan| clean["plan shows no diff, if config matches"]`;
+
+<Callout title="The one-line takeaway">
+**Configuration drift** is any gap between your Terraform configuration and the real state of AWS caused by changes made outside Terraform — `terraform plan` surfaces it as a diff, and `terraform apply -refresh-only` lets you update Terraform's recorded state to match reality without changing any real infrastructure. **`terraform import`** (the CLI command) associates an existing, manually-created resource with a resource address you have already written in your config, but it only populates the state entry — you still hand-write the matching `resource` block yourself. The newer **`import` block** (Terraform 1.5+) does the same job declaratively inside a `.tf` file, and is preferred where available because it is plannable and reviewable in `terraform plan` before it happens, rather than an immediate, unreviewed CLI side effect. `terraform state mv` and `terraform state rm` reorganize or stop tracking resources in state without ever touching the real infrastructure.
+</Callout>
+
+export const quizDriftImport = [
+  {
+    q: 'A teammate changes a tag on an EC2 instance directly in the AWS Console. What happens the next time someone runs terraform plan',
+    options: [
+      'Nothing, Terraform only checks state and never re-reads real resources',
+      'Terraform refreshes its view of the real resource, notices the mismatch, and shows a diff proposing to change the tag back to match the configuration',
+      'Terraform automatically updates the configuration file to match the console change',
+      'terraform plan fails with an error and refuses to continue',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What does terraform apply -refresh-only do',
+    options: [
+      'It applies all pending configuration changes to real infrastructure immediately',
+      'It updates the recorded state to match the real infrastructure without changing any actual AWS resources',
+      'It deletes the state file and starts tracking from scratch',
+      'It refreshes provider plugin versions without touching state',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Why is the declarative import block often preferred over running the terraform import CLI command',
+    options: [
+      'The import block automatically writes the matching resource block for you, which the CLI command cannot do',
+      'The import block shows up as a planned action in terraform plan and can be reviewed before anything happens, while the CLI command mutates state immediately with no preview',
+      'The import block works with older Terraform versions that the CLI command does not support',
+      'There is no difference, they are aliases for the same operation',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What does terraform state rm do to the real AWS resource it was tracking',
+    options: [
+      'It destroys the real resource in AWS',
+      'Nothing, it only removes the resource entry from state so Terraform stops tracking it, and the real object keeps running unchanged',
+      'It stops the resource but does not delete it',
+      'It exports the resource configuration to a new .tf file automatically',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="state-management/drift-detection-and-import" questions={quizDriftImport} />
+
+<ProgressTracker client:visible id="state-management/drift-detection-and-import" />

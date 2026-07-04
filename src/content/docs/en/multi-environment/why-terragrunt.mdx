@@ -1,0 +1,136 @@
+---
+title: 'Why Terragrunt'
+description: 'The gap left by Terraform workspaces and directory-per-environment, and how Terragrunt closes it by wrapping the real terraform binary.'
+sidebar:
+  order: 4
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## The idea in one sentence
+
+Terragrunt is a thin wrapper around the real `terraform` (or `tofu`) binary that generates and manages the repeated backend, provider, and input boilerplate across environments, so you can have both DRY configuration and strong isolation instead of trading one for the other.
+
+## The gap neither Terraform-native approach closes
+
+The last two lessons covered the two answers Terraform itself offers to the multi-environment problem, and each one closes exactly half the gap:
+
+- **Workspaces** are excellent at DRY reuse — one configuration, one backend, many state files — but offer weak isolation: every workspace shares the same backend, the same provider configuration, and the same `.tf` code, with nothing but a CLI-selected string separating them.
+- **Directory-per-environment** is excellent at isolation — a real directory, a real backend, potentially a real separate AWS account per environment — but reintroduces duplication: the backend block, the provider block, and the module `source` argument end up copy-pasted nearly verbatim across every environment directory.
+
+Plain Terraform has no first-class primitive that gives you both strong isolation and zero configuration duplication at the same time. Picking one Terraform-native pattern always means accepting the other pattern's weakness.
+
+## What Terragrunt actually is
+
+Terragrunt is a thin **wrapper and orchestrator** that sits on top of your existing Terraform (or OpenTofu) setup. It does not introduce a new resource syntax, and it does not replace anything inside `modules/app` — your actual module code is completely unchanged, plain Terraform, exactly as covered in every earlier lesson. What Terragrunt adds is a layer above that, responsible for the boilerplate you just watched pile up in the directory-per-environment pattern:
+
+- Generating each environment's **backend configuration** from one central definition, instead of hand-copying the `backend "s3"` block into every environment directory.
+- Generating each environment's **provider configuration** the same way.
+- Supplying each environment's **input variables** in one place per environment, without repeating the surrounding `module` block boilerplate.
+- Understanding **dependency ordering** when infrastructure is split across multiple independently-applied units — for example, a `vpc` unit that an `ec2` unit needs outputs from.
+
+A minimal Terragrunt unit for the `dev` environment from the previous lesson looks like this — notice the backend fields are the same ones you wrote by hand before, just generated from configuration instead of copy-pasted:
+
+```hcl
+# environments/dev/app/terragrunt.hcl
+remote_state {
+  backend = "s3"
+  generate = {
+    path      = "backend.tf"
+    if_exists = "overwrite"
+  }
+  config = {
+    bucket       = "acme-terraform-state-dev"
+    key          = "app/terraform.tfstate"
+    region       = "us-east-1"
+    use_lockfile = true
+  }
+}
+
+terraform {
+  source = "../../../modules/app"
+}
+
+inputs = {
+  environment    = "dev"
+  instance_type  = "t3.micro"
+  instance_count = 1
+}
+```
+
+## What Terragrunt is not
+
+This is worth being precise about, because it is the most common misconception: Terragrunt is not a fork of Terraform, and it does not compile your configuration into some different infrastructure-as-code language. Every single Terragrunt command ultimately shells out to a real `terraform` or `tofu` command underneath, running against the exact backend and provider configuration Terragrunt just assembled for it. Run `terragrunt plan` and, underneath, an ordinary `terraform plan` executes — Terragrunt's job ends at generating the inputs and orchestrating when that real command runs.
+
+## The dependency-ordering problem this also solves
+
+A single Terraform configuration already understands dependency order between resources inside one state file — if a security group references a VPC's ID, Terraform figures out the VPC must be created first, automatically. That graph stops at the edge of one state file. The moment infrastructure is split into multiple independently-applied units — a `vpc` unit with its own state, and a separate `ec2` unit with its own state that needs the VPC's subnet IDs — nothing in either individual `terraform apply` knows the other unit needs to run first, because each is a completely separate process operating on a completely separate state file.
+
+Terragrunt closes that gap with a `dependency` block that reads another unit's outputs, and a run queue that applies units in the correct order automatically:
+
+```bash
+# Terragrunt determines vpc must run before ec2, then applies both in order
+terragrunt run --all apply
+```
+
+<Mermaid title="Workspaces (DRY, weak isolation) and directory-per-environment (isolated, duplicated) both leave a gap; Terragrunt wraps the real terraform binary to close it" code={terragruntGapDiagram} />
+
+export const terragruntGapDiagram = `flowchart LR
+  ws["Workspaces: DRY, weak isolation"] --> gap["The gap: no primitive gives both at once"]
+  dirEnv["Directory-per-environment: isolated, duplicated boilerplate"] --> gap
+  gap --> tg["Terragrunt: generates config, orders units"]
+  tg --> tf["Real terraform / tofu binary"]`;
+
+<Callout title="The one-line takeaway">
+Terraform workspaces solve DRY reuse but leave isolation weak; directory-per-environment solves isolation but reintroduces boilerplate duplication — plain Terraform has no primitive that closes both gaps at once. **Terragrunt** is a thin wrapper and orchestrator, not a fork of Terraform and not a new IaC language, that generates backend, provider, and input configuration from one central definition instead of copy-pasted boilerplate, and every Terragrunt command ultimately shells out to a real `terraform`/`tofu` command underneath. It additionally understands **dependency ordering** across multiple independently-applied units with separate state files — like a `vpc` unit an `ec2` unit depends on — which a single Terraform configuration's own internal graph cannot see across, since that graph stops at the edge of one state file.
+</Callout>
+
+export const quizWhyTerragrunt = [
+  {
+    q: 'What gap remains after using either Terraform workspaces or the directory-per-environment pattern alone',
+    options: [
+      'Both approaches fully solve DRY reuse and strong isolation at the same time, so there is no remaining gap',
+      'Neither approach gives you both DRY configuration and strong isolation together — workspaces trade isolation for reuse, and directory-per-environment trades reuse for isolation',
+      'Workspaces cannot be used with the S3 backend at all',
+      'Directory-per-environment cannot use shared modules',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What is Terragrunt, accurately described',
+    options: [
+      'A fork of Terraform with its own resource syntax and its own state format',
+      'A thin wrapper and orchestrator around the real terraform or tofu binary that generates backend, provider, and input configuration and manages dependency ordering, without changing how .tf module code is written',
+      'A replacement for HCL that compiles to a different infrastructure-as-code language',
+      'A managed cloud service that replaces the need for a Terraform backend entirely',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What is Terragrunt commonly mistaken for, that it is explicitly not',
+    options: [
+      'A linter for HCL syntax errors',
+      'A new infrastructure-as-code language or a fork/replacement of Terraform, when in fact every command shells out to a real terraform/tofu command underneath',
+      'A testing framework for Terraform modules',
+      'A cost-estimation tool for AWS resources',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What kind of problem does Terragrunt solve that a single Terraform configuration internal dependency graph does not',
+    options: [
+      'Formatting HCL code consistently across a team',
+      'Ordering apply across multiple independently-applied units with separate state files, such as a vpc unit that an ec2 unit needs outputs from, since a single configuration graph only sees dependencies inside its own state file',
+      'Encrypting the state file at rest',
+      'Resolving provider version conflicts automatically',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="multi-environment/why-terragrunt" questions={quizWhyTerragrunt} />
+
+<ProgressTracker client:visible id="multi-environment/why-terragrunt" />

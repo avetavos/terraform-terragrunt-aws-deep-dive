@@ -1,0 +1,180 @@
+---
+title: 'CI/CD for Infrastructure'
+description: 'How plan and apply map onto pull requests and merges, why a plan needs sharper review than a code diff, and how OIDC federation replaces long-lived AWS credentials in CI.'
+sidebar:
+  order: 1
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## The idea in one sentence
+
+A standard infrastructure pipeline runs `plan` automatically on every pull request for a human to review, and reserves `apply` for after merge to the main branch — using short-lived, OIDC-federated AWS credentials instead of a long-lived access key stored in CI.
+
+## Plan on every pull request, apply only after merge
+
+The pattern that most teams converge on mirrors application CI/CD, with one important difference in what each stage actually does:
+
+- **Pull request opened or updated** → run `terraform plan` (or `terragrunt run --all plan` for a multi-unit Terragrunt setup) and post the resulting diff as a comment on the pull request. Nothing in AWS changes yet — this is a dry run whose only job is to make the proposed change visible to a reviewer before anyone approves it.
+- **Merge to main** → run `terraform apply` (or `terragrunt run --all apply`) from the pipeline itself, not from anyone's laptop. For production specifically, this step is frequently gated behind a manual approval — a named reviewer or team has to click "approve" in the CI system before the apply job is allowed to run, even though the plan was already reviewed at the pull-request stage.
+
+```yaml
+name: terraform
+
+on:
+  pull_request:
+    paths:
+      - 'infra/**'
+  push:
+    branches:
+      - main
+    paths:
+      - 'infra/**'
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  plan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::111122223333:role/github-actions-terraform
+          aws-region: us-east-1
+      - uses: hashicorp/setup-terraform@v3
+      - run: terragrunt run --all plan -no-color | tee plan.txt
+      - run: gh pr comment ${{ github.event.pull_request.number }} --body-file plan.txt
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  apply:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::111122223333:role/github-actions-terraform
+          aws-region: us-east-1
+      - uses: hashicorp/setup-terraform@v3
+      - run: terragrunt run --all apply --non-interactive
+```
+
+The `environment: production` line is what supplies the manual approval gate — GitHub Actions holds the `apply` job until someone with permission on that environment approves the run. Notice that neither job ever checks out a stored AWS access key; both assume a role through OIDC, covered next.
+
+## Why a plan deserves sharper review than a typical code diff
+
+A pull request against application code is reviewed for logic, tests, and style — worst case, a bug ships and gets rolled back. An infrastructure `apply` can do something a code deploy cannot: destroy real, stateful AWS resources and rebuild them from scratch, sometimes because of a single one-line change.
+
+Terraform calls this a **forced replacement**. Certain arguments on certain resources cannot be updated in place — changing them means the provider has no API call for "modify this attribute," only "destroy and create a new one." An RDS instance's `identifier`, an EBS volume's `availability_zone`, or a resource's own name in some providers all fall into this category. When that happens, `terraform plan` marks the resource with `-/+` instead of the in-place `~`:
+
+```bash
+# terraform plan output — this is the line to stop and read carefully
+  # aws_db_instance.main must be replaced
+-/+ resource "aws_db_instance" "main" {
+      ~ identifier     = "app-db" -> "app-db-renamed" # forces replacement
+        engine         = "postgres"
+        instance_class = "db.t3.micro"
+    }
+```
+
+A `-/+` on a stateful resource like a database or a persistent volume can mean real data loss or real downtime the moment someone clicks approve — the old resource is gone before the new one exists. This is exactly why reviewing an infrastructure plan cannot be a skim. A reviewer has to specifically scan for `-/+` lines and ask whether that replacement is expected and safe, not just read the plan the way they would read a code diff for style and logic.
+
+## Short-lived OIDC credentials instead of a stored access key
+
+Older pipelines stored a long-lived AWS access key and secret as CI secrets and exported them as environment variables before every run. That key works for `plan` and `apply` equally well, which is exactly the problem: if it ever leaks — from a misconfigured log, a compromised dependency, or a workflow file that echoes environment variables — it keeps working until someone manually rotates or revokes it.
+
+Current best practice replaces that key with **OIDC federation**. GitHub Actions can present a short-lived, cryptographically signed identity token to AWS for each workflow run. An IAM OIDC identity provider in the AWS account trusts GitHub's token issuer, and an IAM role's trust policy allows only specific repositories and branches to assume it. `aws-actions/configure-aws-credentials` exchanges that token for temporary AWS credentials scoped to the assumed role, valid for the lifetime of the job and nothing beyond it.
+
+```yaml
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assume AWS role via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::111122223333:role/github-actions-terraform
+          aws-region: us-east-1
+
+      - name: Terraform plan
+        run: terraform plan
+```
+
+No AWS access key ever needs to exist as a stored CI secret at all — there is nothing long-lived to leak, rotate, or forget about. `permissions: id-token: write` is what allows the workflow to request that identity token in the first place; without it, the OIDC exchange has nothing to present to AWS.
+
+<Mermaid title="A pull request triggers plan for review; merge to main triggers apply behind an approval gate; OIDC supplies short-lived credentials to both" code={cicdPipelineDiagram} />
+
+export const cicdPipelineDiagram = `flowchart LR
+  pr["Pull request"] -->|triggers| plan["terragrunt run --all plan"]
+  plan -->|posted as| comment["PR comment for review"]
+  comment -->|approved and merged| main["Merge to main"]
+  main -->|triggers, gated by approval| apply["terragrunt run --all apply"]
+  oidc["GitHub OIDC provider"] -->|short-lived credentials| plan
+  oidc -->|short-lived credentials| apply`;
+
+<Callout title="The one-line takeaway">
+A standard IaC pipeline runs **`plan`** on every pull request and posts it as a comment for human review, and reserves **`apply`** for after merge to main, typically behind a manual approval gate for production; because an `apply` can trigger a **forced replacement** (`-/+` in the plan — destroy then recreate) rather than a safe in-place update, reviewing an infrastructure plan requires specifically scanning for those lines, not just skimming it like a code diff; and CI credentials should come from short-lived **OIDC federation** (`aws-actions/configure-aws-credentials` assuming an IAM role via GitHub's OIDC identity provider) rather than a long-lived AWS access key stored as a CI secret.
+</Callout>
+
+export const quizCicdPipeline = [
+  {
+    q: 'In a standard IaC CI/CD pipeline, what should trigger terraform plan versus terraform apply',
+    options: [
+      'Both plan and apply should run on every pull request',
+      'plan runs automatically on every pull request touching infrastructure code for review; apply runs only after merge to main, often behind an approval gate for production',
+      'apply should run on pull requests so changes are already live before review',
+      'plan and apply should both be run manually from an engineer laptop',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Why does an infrastructure plan need more careful review than a typical application code diff',
+    options: [
+      'Infrastructure code is always shorter, so review takes less time regardless',
+      'An apply can force a resource replacement, destroying and recreating a stateful resource, which can mean real data loss or downtime if the -/+ in the plan is not caught before approval',
+      'Terraform plans cannot be reviewed by more than one person',
+      'Application code review and infrastructure plan review are functionally identical',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What does a -/+ next to a resource in terraform plan output mean',
+    options: [
+      'The resource will be updated in place with no downtime',
+      'The resource must be destroyed and recreated because a changed argument forces replacement rather than an in-place update',
+      'Terraform could not determine whether the resource changed',
+      'The resource will be imported from existing infrastructure',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Why is OIDC federation preferred over a long-lived AWS access key stored as a CI secret',
+    options: [
+      'OIDC federation is slower but more secure, so it is only used for production',
+      'It issues short-lived, scoped credentials for each run by having the CI system assume an IAM role through a trusted identity token, so no long-lived AWS key ever needs to be stored or rotated in CI',
+      'OIDC federation removes the need for an IAM role entirely',
+      'A long-lived access key is required for terraform apply to work at all',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="production-and-ecosystem/ci-cd-for-infrastructure" questions={quizCicdPipeline} />
+
+<ProgressTracker client:visible id="production-and-ecosystem/ci-cd-for-infrastructure" />

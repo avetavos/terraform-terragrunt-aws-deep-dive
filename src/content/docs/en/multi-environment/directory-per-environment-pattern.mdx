@@ -1,0 +1,155 @@
+---
+title: 'Directory-per-Environment Pattern'
+description: 'Giving every environment its own backend and directory while still sharing one Terraform module, and the duplication that pattern reintroduces.'
+sidebar:
+  order: 3
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## The idea in one sentence
+
+Directory-per-environment gives every environment a genuinely separate directory with its own backend configuration, while every environment's root config calls the same shared module with different input values.
+
+## A real directory, a real backend, per environment
+
+Instead of one workspace-selected state file, this pattern uses one real directory per environment, each with its own root-level `.tf` files:
+
+```bash
+environments/
+├── dev/
+│   └── main.tf
+├── staging/
+│   └── main.tf
+└── prod/
+    └── main.tf
+modules/
+└── app/
+    └── main.tf
+```
+
+The key difference from copy-pasting a whole environment is what lives inside each `main.tf`: not a full copy of the application's resources, but a small root configuration with its own `backend` block and a single `module` call into one shared module:
+
+```hcl
+# environments/dev/main.tf
+terraform {
+  backend "s3" {
+    bucket       = "acme-terraform-state-dev"
+    key          = "app/terraform.tfstate"
+    region       = "us-east-1"
+    use_lockfile = true
+  }
+}
+
+provider "aws" {
+  region  = "us-east-1"
+  profile = "acme-dev"
+}
+
+module "app" {
+  source = "../../modules/app"
+
+  environment    = "dev"
+  instance_type  = "t3.micro"
+  instance_count = 1
+}
+```
+
+```hcl
+# environments/prod/main.tf
+terraform {
+  backend "s3" {
+    bucket       = "acme-terraform-state-prod"
+    key          = "app/terraform.tfstate"
+    region       = "us-east-1"
+    use_lockfile = true
+  }
+}
+
+provider "aws" {
+  region  = "us-east-1"
+  profile = "acme-prod"
+}
+
+module "app" {
+  source = "../../modules/app"
+
+  environment    = "prod"
+  instance_type  = "m5.large"
+  instance_count = 3
+}
+```
+
+Notice each backend points at a completely separate S3 bucket, tied to a separate `profile` (and, in a real setup, often a genuinely separate AWS account) — `dev` and `prod` cannot accidentally share state, because there is no shared state to accidentally touch. The actual application resources live once, in `modules/app`, and every environment simply calls that module with different `instance_type` and `instance_count` values.
+
+## What this genuinely solves
+
+This directly fixes workspaces' weak isolation. Each environment directory can point at its own AWS account, its own region, and its own backend bucket, with nothing tying them together at the Terraform level. There is no shared state file for a mistyped workspace name to accidentally touch, and no shared provider block for the wrong credentials to sneak through. If `dev` and `prod` genuinely need to live in different AWS accounts for blast-radius isolation, this pattern can express that; workspaces cannot.
+
+## The DRY problem this reintroduces
+
+Look again at those two `main.tf` files. The `instance_type`, `instance_count`, and `environment` inputs are the only lines that meaningfully differ between them — three lines out of roughly fifteen. Everything else — the `backend "s3"` block's shape, the `provider "aws"` block, and the `module "app"` block's `source` argument — is boilerplate, repeated nearly verbatim in every environment directory. Bump the module to a new version, add a new required provider argument, or rename the state key convention, and that change has to be hand-applied to `dev/main.tf`, `staging/main.tf`, and `prod/main.tf` individually — the exact same manual-repetition failure mode from the copy-paste-a-whole-directory approach, just narrowed down to a smaller, but still real, slice of each file.
+
+<Mermaid title="Three isolated environment directories, one shared module, but near-identical boilerplate repeated in every directory" code={dirPerEnvDiagram} />
+
+export const dirPerEnvDiagram = `flowchart LR
+  mod["modules/app (shared source)"]
+  devEnv["environments/dev/main.tf"] -->|module call with dev inputs| mod
+  stagingEnv["environments/staging/main.tf"] -->|module call with staging inputs| mod
+  prodEnv["environments/prod/main.tf"] -->|module call with prod inputs| mod
+  devEnv -.->|near-identical backend + provider + source blocks| stagingEnv
+  stagingEnv -.->|near-identical backend + provider + source blocks| prodEnv`;
+
+<Callout title="The one-line takeaway">
+Directory-per-environment gives each environment a real, separate directory with its own **backend** and **provider** configuration — even a separate AWS account — while every directory's root config calls the same **shared module** with different inputs, fixing the weak isolation of workspaces. The tradeoff is that the backend block, provider block, and module `source` argument end up duplicated nearly verbatim across every environment directory, with only a handful of input values actually differing, reintroducing a smaller-scale version of the DRY problem this module started with.
+</Callout>
+
+export const quizDirPerEnv = [
+  {
+    q: 'What does the directory-per-environment pattern solve that Terraform workspaces do not',
+    options: [
+      'It removes the need for any backend configuration at all',
+      'It gives each environment a genuinely separate backend, provider configuration, and potentially a separate AWS account, since environments are no longer sharing the same backend and .tf code the way workspaces do',
+      'It makes Terraform apply faster',
+      'It automatically generates documentation for each environment',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What stays DRY (written once, reused everywhere) in the directory-per-environment pattern',
+    options: [
+      'The backend configuration block',
+      'The shared module (for example modules/app), which every environment directory calls with different input values instead of duplicating its resources',
+      'The provider block',
+      'The state file itself',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What is still being duplicated across environment directories in this pattern, despite solving isolation',
+    options: [
+      'Nothing; this pattern has no duplication at all',
+      'The backend block, provider block, and module source and version arguments, which repeat nearly verbatim across every environment directory with only the key and inputs differing',
+      'Only the application code inside modules/app',
+      'The AWS credentials, which are literally copy-pasted between environments',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Why can environments/dev and environments/prod safely use two entirely different AWS accounts in this pattern',
+    options: [
+      'Because Terraform automatically detects and prevents cross-account access',
+      'Because each environment directory has its own independent backend and provider configuration, so there is no shared state file or shared credentials between them',
+      'Because AWS accounts cannot be used with Terraform workspaces, only with directories',
+      'Because the shared module enforces account boundaries internally',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="multi-environment/directory-per-environment-pattern" questions={quizDirPerEnv} />
+
+<ProgressTracker client:visible id="multi-environment/directory-per-environment-pattern" />

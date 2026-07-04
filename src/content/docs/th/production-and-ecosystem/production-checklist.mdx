@@ -1,0 +1,187 @@
+---
+title: 'Production Checklist'
+description: 'checklist ก่อนขึ้น production ที่รวบยอด ผูก backend locking, version pinning, plan review, การจัดการ secret, static analysis, dependency ordering และ testing กลับเข้ากับคอร์สทั้งหมด'
+sidebar:
+  order: 4
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## ไอเดียในหนึ่งประโยค
+
+การเอา Terraform กับ Terragrunt ขึ้น production ไม่ใช่การตัดสินใจก้อนใหญ่ก้อนเดียว แต่เป็น checklist ของการตัดสินใจเล็ก ๆ หลายอัน — แต่ละอันถูกพูดไปแล้วก่อนหน้านี้ในคอร์ส — ที่ต้องเป็นจริงพร้อมกันทั้งหมด
+
+## Checklist
+
+ไม่มีข้อไหนในนี้เป็นไอเดียใหม่เลย ณ จุดนี้ สิ่งที่ใหม่คือการเห็นมันเรียงกันเป็น list เดียว เพราะความพร้อมสำหรับ production จริง ๆ แล้วก็แค่ทุกข้อในนี้เป็นจริงพร้อมกัน ไม่ใช่ข้อไหนข้อหนึ่งทำได้ดีเป็นพิเศษ
+
+- **remote S3 backend พร้อม locking ตั้งไว้ตั้งแต่วันแรก** `use_lockfile = true` บน S3 backend ตั้งไว้ก่อน `apply` ครั้งแรก ไม่ใช่มาทำทีหลังตอนที่ state file พังแล้วบังคับให้ต้องแก้ พูดไว้ใน State Management
+- **provider กับ module version pin ไว้ ไม่ปล่อยลอย** `.terraform.lock.hcl` ที่ commit ไว้ pin version กับ checksum ของ provider ไว้ชัดเจน ส่วน `source` ของ module ใช้ tag หรือ version constraint เจาะจง ไม่ใช้ branch ที่เคลื่อนไหวได้ใต้เท้าเราเอง พูดไว้ใน Foundations กับ Modules
+- **ทุก `plan` ถูก review ใน CI ก่อนทุก `apply`** โดย reviewer สแกนหา resource replacement แบบ `-/+` ที่ไม่คาดคิดโดยเฉพาะ ไม่ใช่ skim plan แบบ code diff พูดไว้ในบท CI/CD ของ module นี้
+- **เก็บค่า sensitive ออกจาก variable และถ้าเป็นไปได้ออกจาก state** ดึงจาก secrets manager ผ่าน `data` source แทนที่จะพิมพ์ลงใน `tfvars` พร้อมกับ encrypt state backend เองไว้ตอน rest พูดไว้ใน State Management กับบท secrets ของ module นี้
+- **`tflint`, security scanner และ policy-as-code ต่อเข้ากับ CI** ให้ pattern ที่รู้อยู่แล้วว่าไม่ดีกับ rule ขององค์กรถูกบังคับใช้แบบ mechanical แทนที่จะพึ่งคนคอยจับทุกเคสด้วยตา พูดไว้ในบท policy-as-code ของ module นี้
+- **Terragrunt `dependency` block เป็นตัวขับ rollout order** ไม่ใช่คนคอยจำว่า VPC ต้อง apply ก่อน database พูดไว้ใน Terragrunt Fundamentals
+- **`terraform test` / `.tftest.hcl` ครอบคลุม module ไหนที่ทำอะไรที่ไม่ใช่เรื่องธรรมดา** ให้การ refactor internal ของ module ถูกจับด้วย assertion แทนที่จะไปเจอตอน downstream consumer งงว่าเกิดอะไรขึ้น พูดไว้ใน Modules
+
+```hcl
+# vpc/terragrunt.hcl and rds/terragrunt.hcl both use dependency blocks
+# so rollout order is driven by Terragrunt, not a person's memory.
+dependency "vpc" {
+  config_path = "../vpc"
+
+  mock_outputs = {
+    vpc_id             = "mock-vpc-id"
+    private_subnet_ids = ["mock-subnet-id"]
+  }
+  mock_outputs_allowed_terraform_commands = ["plan"]
+}
+
+inputs = {
+  vpc_id    = dependency.vpc.outputs.vpc_id
+  subnet_id = dependency.vpc.outputs.private_subnet_ids[0]
+}
+```
+
+```hcl
+# modules/rds/tests/main.tftest.hcl
+run "sets_expected_engine" {
+  command = plan
+
+  variables {
+    identifier = "app-db-test"
+  }
+
+  assert {
+    condition     = aws_db_instance.this.engine == "postgres"
+    error_message = "RDS module did not default to the postgres engine"
+  }
+}
+```
+
+## หนึ่งระบบที่เชื่อมกัน คือ repo layout จริง
+
+เอาทุกอย่างมาต่อกัน คอร์สนี้รวมเป็นรูปเดียวที่ชัดเจน — ไม่ใช่ list ของข้อเท็จจริงที่ไม่เกี่ยวกัน แต่เป็น repository เดียวที่หน้าตาแบบนี้จริง ๆ
+
+```
+infra/
+├── root.hcl
+├── vpc/
+│   └── terragrunt.hcl
+├── ec2/
+│   └── terragrunt.hcl
+└── rds/
+    └── terragrunt.hcl
+```
+
+`root.hcl` อยู่บนสุด เก็บ backend configuration กับ provider generation ที่ใช้ร่วมกัน ถูก include ด้วยทุก unit ข้างใต้
+
+```hcl
+# infra/root.hcl
+remote_state {
+  backend = "s3"
+  config = {
+    bucket       = "acme-terraform-state"
+    key          = "${path_relative_to_include()}/terraform.tfstate"
+    region       = "us-east-1"
+    use_lockfile = true
+  }
+}
+```
+
+```hcl
+# infra/rds/terragrunt.hcl
+include "root" {
+  path = find_in_parent_folders("root.hcl")
+}
+
+terraform {
+  source = "../../modules/rds"
+}
+
+dependency "vpc" {
+  config_path = "../vpc"
+  mock_outputs = {
+    vpc_id             = "mock-vpc-id"
+    private_subnet_ids = ["mock-subnet-id"]
+  }
+  mock_outputs_allowed_terraform_commands = ["plan"]
+}
+
+inputs = {
+  vpc_id    = dependency.vpc.outputs.vpc_id
+  subnet_id = dependency.vpc.outputs.private_subnet_ids[0]
+}
+```
+
+ทุกชิ้นในนี้ย้อนกลับไปหาบทเรียนก่อนหน้าได้หมด `use_lockfile = true` คือเรื่อง locking ของ module State Management `root.hcl` บวก `include` คือ pattern DRY backend ของ Terragrunt Fundamentals `dependency` block คือตัวที่ทำให้ `rds` reference output จริงของ `vpc` ได้โดยไม่ต้องมีคนจำว่า unit ไหนต้อง apply ก่อน และ source `../../modules/rds` ที่ใน repo จริงควร pin ไว้กับ tag ไม่ใช่ปล่อยลอย คือวินัยเรื่อง versioning ของ Modules
+
+ทั้ง tree นี้ deploy ผ่าน CI/CD shape เดียวกับที่พูดไปก่อนหน้านี้ใน module นี้เป๊ะ ๆ คือ `terragrunt run --all plan` รันทุก pull request ที่แตะ `infra/` post output ให้ review และ `terragrunt run --all apply` รันหลัง merge เข้า main เท่านั้น ใช้ OIDC-federated role ตัวเดียวกัน ไม่ใช่ key ที่เก็บไว้ ไม่มีอะไรในนี้เป็น mechanism ใหม่เลย มันคือชิ้นเดียวกันจากทุก module ก่อนหน้า ต่อกันเป็นระบบเดียวที่ deploy `vpc` แล้วตามด้วย `ec2` กับ `rds` ตามลำดับที่ `dependency` block อธิบายไว้ gate ด้วย plan ที่คนอ่านจริง ๆ
+
+<Mermaid title="root.hcl บวกสามหน่วยที่ dependent กัน deploy ผ่าน CI pipeline ที่ gate plan กับ apply" code={productionRepoDiagram} />
+
+export const productionRepoDiagram = `flowchart TB
+  root["root.hcl: shared S3 backend, use_lockfile = true"]
+  root --> vpc["vpc unit"]
+  root --> ec2["ec2 unit"]
+  root --> rds["rds unit"]
+  vpc -->|dependency block: vpc_id, subnet_ids| ec2
+  vpc -->|dependency block: vpc_id, subnet_ids| rds
+  pr["Pull request"] -->|terragrunt run --all plan| review["Reviewed for -/+ replacements"]
+  review -->|merge to main| apply["terragrunt run --all apply"]
+  apply --> vpc
+  apply --> ec2
+  apply --> rds`;
+
+<Callout title="สรุปหนึ่งบรรทัด">
+ความพร้อมสำหรับ production คือ **checklist** ไม่ใช่การตัดสินใจครั้งเดียว remote backend ที่ lock ไว้ตั้งแต่วันแรก, provider กับ module version ที่ pin ไว้, ทุก `plan` ถูก review ใน CI หา replacement ที่ไม่คาดคิด, secret เก็บออกจาก variable และ state เท่าที่ทำได้พร้อม encrypt backend ไว้ตอน rest, `tflint`/scanner/policy-as-code ต่อเข้ากับ CI, Terragrunt **`dependency`** block ขับ rollout order แทนความจำของคน และ `terraform test` ครอบคลุม module ที่ไม่ใช่เรื่องธรรมดา รวมกันแล้วมันคือระบบเดียวที่เชื่อมกัน — shared backend แบบ **`root.hcl`**, หลาย unit ที่ต่อกันด้วย `dependency` block, deploy ผ่าน pipeline ที่รัน `terragrunt run --all plan` ทุก pull request และ `terragrunt run --all apply` หลัง merge เท่านั้น — ไม่ใช่กองข้อเท็จจริงที่แยกกันอยู่
+</Callout>
+
+export const quizProductionChecklist = [
+  {
+    q: 'ทำไม pin module version ไว้กับ tag เจาะจงถึงสำคัญ แทนที่จะให้ source ชี้ไปที่ branch ที่ลอยได้',
+    options: [
+      'ไม่มีผลจริง เพราะ Terraform ดาวน์โหลด code ล่าสุดใหม่อยู่แล้วทุกครั้ง',
+      'module ที่ไม่ pin version สามารถเปลี่ยนใต้ configuration ได้ระหว่าง run โดยไม่มี diff ให้ review เลย plan เลยเปลี่ยนได้ด้วยเหตุผลที่ไม่เกี่ยวกับ change ของเราเองเลย',
+      'pin version เกี่ยวกับ Terraform binary เองเท่านั้น ไม่เกี่ยวกับ module',
+      'branch ที่ลอยได้จริง ๆ แล้วเป็น pattern ที่แนะนำสำหรับ production',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'ทำไม remote backend พร้อม locking ควรตั้งไว้ตั้งแต่วันแรก แทนที่จะมาเพิ่มทีหลัง',
+    options: [
+      'locking สำคัญแค่ตอนทีมเกินห้าสิบคนเท่านั้น',
+      'local state ไม่รอด ทันทีที่มีเพื่อนร่วมทีมคนที่สองหรือ CI run มาแตะ infrastructure เดียวกัน และการมาทำ backend ทีหลังหลัง state file พังหรือ conflict ยากกว่าเริ่มด้วย backend ตั้งแต่แรกมาก',
+      'locking จำเป็นแค่กับ destroy operation ไม่ใช่ apply',
+      'S3 backend ตั้งค่าไม่ได้จนกว่าจะมี apply ครั้งแรกไปแล้ว',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'ทำไม Terragrunt dependency block ถึงสำคัญกับ rollout หลาย unit แทนที่จะพึ่ง engineer apply unit ตามลำดับที่ถูกต้องด้วยมือ',
+    options: [
+      'dependency block เป็นแค่ของตกแต่ง ไม่มีผลกับลำดับ apply จริง',
+      'มันให้ unit หนึ่ง reference output จริงที่คำนวณแล้วของอีก unit ได้ตรง ๆ และขับลำดับ apply อัตโนมัติ แทนที่จะพึ่งคนจำว่า vpc ต้อง apply ก่อน rds',
+      'dependency block แทนที่ความจำเป็นของ remote backend ไปเลยทั้งหมด',
+      'dependency block ใช้ได้แค่ในไฟล์ terragrunt.hcl เดียวกัน ใช้ข้าม unit ไม่ได้',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'ทำไม review plan ใน CI โดยเฉพาะหา replacement แบบ -/+ ถึงสำคัญในฐานะส่วนหนึ่งของ checklist นี้',
+    options: [
+      '-/+ แปลว่ามี syntax error ใน configuration เสมอ',
+      'forced replacement ทำลายแล้วสร้าง resource ใหม่ ซึ่งอาจแปลว่ามี data loss หรือ downtime จริง ถ้า plan ที่ไม่ถูก review ถูก approve แล้ว apply ไป',
+      '-/+ ปรากฏเฉพาะตอนใช้ Terragrunt เท่านั้น ไม่เกิดกับ Terraform ธรรมดา',
+      'CI รัน terraform plan ไม่ได้ถ้ายังไม่เห็นบรรทัด -/+ ก่อน',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="production-and-ecosystem/production-checklist" questions={quizProductionChecklist} />
+
+<ProgressTracker client:visible id="production-and-ecosystem/production-checklist" />

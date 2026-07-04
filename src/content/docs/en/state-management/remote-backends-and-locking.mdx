@@ -1,0 +1,120 @@
+---
+title: 'Remote Backends and Locking'
+description: 'Why a team cannot share a local state file, how to configure the S3 backend with native locking, and what locking actually prevents.'
+sidebar:
+  order: 2
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## The idea in one sentence
+
+A **remote backend** stores state in a shared location like S3 instead of on one person's laptop, and **locking** stops two people from writing to that shared state at the same time.
+
+## Why local state does not work for a team
+
+By default, `terraform.tfstate` lives on the machine where you ran `apply`. That is fine for a solo experiment, but it breaks down the moment a second person joins:
+
+- Teammate A runs `apply` and creates a VPC. Their laptop's local state file now knows about it.
+- Teammate B, on a different laptop, has never seen that state file. They run `plan` against their own stale or empty local state and either try to recreate the VPC or get a plan that makes no sense next to what actually exists.
+- CI/CD pipelines have the same problem in a sharper form — a pipeline runner is a fresh, disposable environment with no local state file at all. It needs a canonical copy of state to read from and write to on every run, not a copy that happens to be sitting on someone's laptop.
+
+The fix is to move state off any individual machine and into a shared backend that every team member and every CI run points at.
+
+## Configuring the S3 backend with native locking
+
+The current recommended way to store Terraform state on AWS is an S3 bucket configured as the backend, with **native S3 state locking** turned on:
+
+```hcl
+terraform {
+  backend "s3" {
+    bucket       = "my-company-terraform-state"
+    key          = "networking/terraform.tfstate"
+    region       = "us-east-1"
+    use_lockfile = true
+  }
+}
+```
+
+`bucket` and `key` together identify exactly which object in S3 holds this configuration's state — `key` is the path within the bucket, so different configurations (or different Terragrunt units) typically use different keys in the same bucket. `use_lockfile = true` is the important line: Terraform uses a conditional-write lock file stored alongside the state object directly in S3 to coordinate locking. No separate locking infrastructure is required — the S3 bucket alone is enough.
+
+You will still encounter the older pattern in existing codebases, using a separate DynamoDB table for locking:
+
+```hcl
+# Legacy locking pattern — dynamodb_table is deprecated and scheduled for removal.
+# Prefer use_lockfile = true (shown above) in new configurations.
+terraform {
+  backend "s3" {
+    bucket         = "my-company-terraform-state"
+    key            = "networking/terraform.tfstate"
+    region         = "us-east-1"
+    dynamodb_table = "terraform-state-lock"
+  }
+}
+```
+
+That pattern works, and you should not panic if you inherit a codebase that uses it, but `dynamodb_table` is now a deprecated argument on the S3 backend and is planned for removal in a future Terraform version. New configurations should use `use_lockfile = true` instead — it does the same job without a second AWS resource to create, pay for, and keep in sync with the state bucket.
+
+## What locking actually prevents
+
+Imagine locking did not exist. Two people, or a person and a CI run, both execute `terraform apply` against the same S3-backed state at nearly the same moment. Both read the current state, both compute a plan, and both start writing their results back to the same state object. Depending on timing, the second write can overwrite the first — silently dropping the first run's recorded changes even though the first run's infrastructure changes actually happened — or the state file can end up corrupted mid-write.
+
+A lock turns that race into a queue. The first `apply` to start acquires the lock; the second `apply` either waits for the lock to be released, or fails immediately with a clear "state is locked" error, depending on the flags used. Either way, the second run does not get to write over the first run's state while it is mid-flight.
+
+```bash
+# A run that finds the state already locked fails fast with a clear message,
+# rather than corrupting the state file
+terraform apply
+# Error: Error acquiring the state lock
+```
+
+<Mermaid title="Two applies race for the same S3-backed state; the lock lets one through and makes the other wait" code={lockingDiagram} />
+
+export const lockingDiagram = `flowchart LR
+  eng1["Engineer A: terraform apply"] -->|acquires lock| s3["S3 state + lock file"]
+  eng2["CI run: terraform apply"] -->|blocked, waits or fails| s3
+  s3 -->|lock released after apply| eng2`;
+
+<Callout title="The one-line takeaway">
+A **remote backend** like S3 gives every teammate and every CI run the same canonical copy of state, instead of each machine holding its own diverging local file. **Locking** — configured today with `use_lockfile = true` directly on the S3 backend, no DynamoDB table required — prevents two concurrent `apply` runs from writing to that shared state at the same time, which would otherwise corrupt it or silently drop one run's changes. The older `dynamodb_table` locking argument still works but is **deprecated** and scheduled for removal, so prefer `use_lockfile = true` in new configurations.
+</Callout>
+
+export const quizBackends = [
+  {
+    q: 'Why does a local terraform.tfstate file break down once a second team member starts running Terraform',
+    options: [
+      'Local state files expire after 24 hours',
+      'Each machine only knows about the changes applied from that same machine, so a second laptop plans against stale or missing state',
+      'Terraform refuses to run with more than one contributor',
+      'Local state files cannot store more than one resource',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What does use_lockfile = true provide on an S3 backend, and why is it now preferred over a DynamoDB table',
+    options: [
+      'It enables versioning on the S3 bucket automatically',
+      'It provides native state locking using a conditional-write lock file in S3 itself, removing the need for a separate DynamoDB table that the older dynamodb_table argument required',
+      'It encrypts the state file at rest, which DynamoDB locking cannot do',
+      'It has no effect; DynamoDB locking is still required for correctness',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What does state locking actually prevent',
+    options: [
+      'It prevents anyone from ever running terraform plan',
+      'It prevents two concurrent apply runs from writing to the same state file at the same time, which could corrupt it or silently drop changes',
+      'It prevents Terraform from reading the state file at all',
+      'It prevents resources from being destroyed accidentally',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="state-management/remote-backends-and-locking" questions={quizBackends} />
+
+<ProgressTracker client:visible id="state-management/remote-backends-and-locking" />

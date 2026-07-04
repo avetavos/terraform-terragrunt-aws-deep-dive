@@ -1,0 +1,152 @@
+---
+title: 'Sensitive Data and Team Workflows'
+description: 'What sensitive = true actually protects, why state itself must be treated as a secret, and where a shared backend still falls short for a growing team.'
+sidebar:
+  order: 4
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## The idea in one sentence
+
+Marking a value `sensitive = true` hides it from your terminal, but the value is still sitting in plaintext in the state file, so the real fix is protecting the state backend itself and keeping long-lived secrets out of Terraform entirely.
+
+## What sensitive = true actually does
+
+Both `variable` and `output` blocks accept a `sensitive` argument:
+
+```hcl
+variable "database_password" {
+  type      = string
+  sensitive = true
+}
+
+output "db_connect_string" {
+  value     = "Server=${aws_db_instance.main.address};Pwd=${var.database_password}"
+  sensitive = true
+}
+```
+
+With `sensitive = true` set, Terraform redacts the value everywhere it would otherwise show up on your terminal or in a CI log: it prints `(sensitive value)` in `terraform plan` and `terraform apply` output instead of the real string, and it refuses to print the raw value from `terraform output` unless you explicitly ask with `terraform output db_connect_string`. That is a genuinely useful guardrail — it stops a password from scrolling past in a shared CI log or a screen-shared terminal by accident.
+
+Here is the misconception worth being explicit about: `sensitive = true` is a **display** feature, not an encryption feature. The value is computed, stored, and diffed by Terraform exactly the same way whether or not you mark it sensitive — it still gets written into `terraform.tfstate` in full plaintext, tags and all. Anyone who can read the raw state file, whether from an S3 bucket, a local `.tfstate`, or a `terraform state pull`, can see that password sitting right there in JSON, `sensitive` flag or no `sensitive` flag.
+
+```bash
+terraform state pull | grep -A3 db_connect_string
+# "db_connect_string": {
+#   "value": "Server=mydb.abc123.us-east-1.rds.amazonaws.com;Pwd=S3cretPassword!",
+#   "type": "string"
+```
+
+## Protecting state at rest
+
+Since marking a value sensitive does not remove it from state, the actual protection has to happen at the storage layer. Treat `terraform.tfstate` itself as a secret, the same way you would treat a `.env` file full of production credentials:
+
+- **Encrypt the backend at rest.** For the S3 backend covered in the previous lesson, that means enabling S3 server-side encryption (SSE) on the state bucket, so every object — including every version of your state file — is encrypted on disk regardless of who accesses the bucket API.
+- **Restrict who can read the bucket.** An IAM policy that scopes access to the state bucket down to the specific roles and users that legitimately need to run Terraform is what actually stops an unauthorized reader from ever reaching the plaintext, encryption at rest notwithstanding — encryption at rest protects against someone getting at the raw disk, not against someone with valid AWS credentials calling `s3:GetObject`.
+
+```hcl
+resource "aws_s3_bucket" "state" {
+  bucket = "my-company-terraform-state"
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "state" {
+  bucket = aws_s3_bucket.state.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+```
+
+Where possible, the better move is avoiding the problem entirely: do not put long-lived secrets into Terraform variables in the first place if you can pull them at apply time instead. A `data` source that reads from a secrets manager fetches the current value when Terraform runs, without you ever typing the secret into a `.tf` or `.tfvars` file:
+
+```hcl
+data "aws_secretsmanager_secret_version" "db_password" {
+  secret_id = "prod/app-db/password"
+}
+
+resource "aws_db_instance" "main" {
+  identifier     = "app-db"
+  engine         = "postgres"
+  instance_class = "db.t3.micro"
+  username       = "app_admin"
+  password       = data.aws_secretsmanager_secret_version.db_password.secret_string
+}
+```
+
+Be clear-eyed about what this does and does not solve: the resolved secret value still ends up in `aws_db_instance.main`'s state entry, because Terraform has to record the attribute it set, exactly like the plaintext risk from the first lesson in this module. What it does solve is the secret's lifecycle everywhere else — it is never typed into a variable, never sits in a `.tfvars` file that might get committed by accident, and rotating it in Secrets Manager does not require touching any Terraform configuration. Protecting the state backend itself is still the non-negotiable part.
+
+## Where shared state stops being enough
+
+The previous lesson set up an S3 backend with locking, which solves the "everyone reads and writes the same state safely" problem. That is necessary, but it is not sufficient once a team grows past a couple of engineers. With nothing else in place, "everyone runs `terraform apply` from their own laptop whenever they feel like it" still has real gaps:
+
+- Concurrent `apply` runs do not corrupt anything now that locking is in place, but they do queue up behind each other — a second engineer's run just waits, with no visibility into what the first run is doing or how long it will take.
+- There is no natural point where a second person reviews a change before it goes live. Locking prevents two applies from racing; it does not stop one engineer from applying a change nobody else has looked at.
+- Each engineer needs valid AWS credentials with enough permission to run `apply` locally, which is a wider blast radius than most teams want to hand out to every laptop.
+
+None of that means the shared backend from the previous lesson was wrong — it is a prerequisite, not a mistake. It just is not the whole story. Closing this gap is exactly what CI/CD for infrastructure is for: a pipeline runs `plan` on every proposed change for review before anyone applies it, and `apply` runs from a controlled pipeline identity instead of individual laptops. That is a topic for later in this course, not something to solve here — the point for now is recognizing the shape of the gap so it does not come as a surprise.
+
+<Mermaid title="A sensitive variable is redacted from CLI output but still lands in state as plaintext, versus a secret pulled from Secrets Manager at apply time" code={sensitiveDataDiagram} />
+
+export const sensitiveDataDiagram = `flowchart LR
+  sv["variable with sensitive = true"] -->|redacted| cli["CLI output: (sensitive value)"]
+  sv -->|full value written| state["terraform.tfstate: plaintext"]
+  sm["Secrets Manager"] -->|data source at apply time| res["Resource attribute"]
+  res -->|attribute recorded| state`;
+
+<Callout title="The one-line takeaway">
+`sensitive = true` on a `variable` or `output` only redacts the value from **CLI output** like `plan`, `apply`, and `terraform output` — it does **not** encrypt anything, and the full value is still written into `terraform.tfstate` in plaintext regardless. The real protection for sensitive data is at the storage layer: **encrypt the state backend at rest** (S3 server-side encryption) and **restrict read access** with IAM policy, treating the state file itself as a secret. Where possible, avoid long-lived secrets in Terraform variables altogether by pulling them from a secrets manager through a `data` source at apply time instead. Even with a shared, locked S3 backend, a team relying purely on everyone applying from their own laptop still lacks concurrency visibility and review before apply — the gap that CI/CD for infrastructure closes later in this course.
+</Callout>
+
+export const quizSensitiveWorkflows = [
+  {
+    q: 'What does setting sensitive = true on a Terraform variable actually protect against',
+    options: [
+      'It encrypts the value everywhere Terraform stores or transmits it',
+      'It redacts the value from CLI output such as plan, apply, and terraform output, but does not change how the value is stored',
+      'It prevents the value from ever being written into the state file',
+      'It automatically rotates the value on a schedule',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'A database password is marked sensitive = true on its variable block. Is it still readable in plaintext anywhere',
+    options: [
+      'No, sensitive values are never persisted anywhere once marked',
+      'Yes, it is still written into terraform.tfstate in plaintext exactly as if it were not marked sensitive',
+      'Only if -sensitive is also passed as a CLI flag during apply',
+      'No, Terraform automatically encrypts any value marked sensitive before writing state',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What is the real way to protect sensitive data stored in a Terraform state file',
+    options: [
+      'Marking every variable and output as sensitive = true',
+      'Encrypting the state backend at rest and restricting who can read it via IAM policy, treating the state file as a secret',
+      'Adding terraform.tfstate to .gitignore is sufficient on its own',
+      'Renaming the state file so it is harder to find',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Why is pulling a secret from a secrets manager via a data source often better than storing it as a Terraform variable for a long-lived credential',
+    options: [
+      'It keeps the secret out of .tf and .tfvars files and out of the rotation workflow, even though the resolved value can still end up in the resource attribute recorded in state',
+      'It prevents the secret from ever appearing in the state file at all',
+      'It removes the need to encrypt the state backend',
+      'Data sources cannot be used with sensitive values, so this avoids the issue entirely',
+    ],
+    answer: 0,
+  },
+];
+
+<Quiz client:visible id="state-management/sensitive-data-and-team-workflows" questions={quizSensitiveWorkflows} />
+
+<ProgressTracker client:visible id="state-management/sensitive-data-and-team-workflows" />

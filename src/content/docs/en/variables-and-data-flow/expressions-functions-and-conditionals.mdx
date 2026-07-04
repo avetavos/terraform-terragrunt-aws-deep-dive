@@ -1,0 +1,174 @@
+---
+title: 'Expressions, Functions, and Conditionals'
+description: 'Using built-in functions to transform values, terraform console to experiment with expressions safely, conditional expressions to pick between two values, and dynamic blocks to generate a variable number of nested blocks inside one resource.'
+sidebar:
+  order: 3
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## The idea in one sentence
+
+Terraform configuration is not just static values — expressions call built-in functions, branch with a conditional, and generate a variable number of nested blocks, all evaluated before any resource is ever created.
+
+## Built-in functions, and terraform console for checking them
+
+Terraform ships a large standard library of built-in functions — there is no way to define your own. They fall into families worth knowing by category rather than memorizing individually: string functions like `join`, `split`, and `format` reshape text; collection functions like `lookup`, `merge`, and `contains` work on lists, maps, and sets; numeric functions handle arithmetic and rounding; and a set of networking-specific functions, most importantly `cidrsubnet`, exist because carving up IP address ranges by hand is exactly the kind of repetitive, error-prone arithmetic a function should do instead.
+
+```hcl
+locals {
+  # string functions
+  bucket_name = join("-", [var.project, var.environment, "logs"])
+  az_list     = split(",", "us-east-1a,us-east-1b,us-east-1c")
+  label       = format("%s-%03d", var.project, var.build_number)
+
+  # collection functions
+  instance_type = lookup(var.instance_type_overrides, var.environment, "t3.micro")
+  full_tags     = merge(var.default_tags, var.extra_tags)
+  is_prod_like  = contains(["prod", "staging"], var.environment)
+}
+
+resource "aws_subnet" "app" {
+  count = 3
+
+  vpc_id     = aws_vpc.main.id
+  cidr_block = cidrsubnet(aws_vpc.main.cidr_block, 4, count.index)
+}
+```
+
+`cidrsubnet(prefix, newbits, netnum)` takes a parent CIDR block, extends its prefix length by `newbits`, and fills the new bits with `netnum` to produce one subnet. Given a `/16` VPC and `newbits = 4`, each call produces a `/20`, and passing `count.index` as `netnum` hands out consecutive, non-overlapping subnets automatically — no one has to compute `10.0.16.0/20`, `10.0.32.0/20`, and so on by hand, and no one has to remember to skip a range that is already in use.
+
+Before putting an unfamiliar function into a resource argument, `terraform console` is the fastest way to find out what it actually returns. It opens an interactive REPL against the current configuration and state, without touching any real infrastructure.
+
+```bash
+terraform console
+```
+
+```
+> cidrsubnet("10.0.0.0/16", 4, 2)
+"10.0.32.0/20"
+> join("-", ["payments", "prod", "logs"])
+"payments-prod-logs"
+> lookup({dev = "t3.micro", prod = "m6i.large"}, "staging", "t3.small")
+"t3.small"
+```
+
+Every one of those answers is something you would otherwise have had to guess at, run a full `plan` to see, or work out on paper. `terraform console` evaluates any expression — a function call, a reference to a variable or resource attribute, a whole conditional — and prints the result immediately, which makes it the natural first stop whenever an expression's behavior is not obvious.
+
+## Conditional expressions
+
+A conditional expression has exactly three parts: `condition ? true_val : false_val`. Terraform evaluates `condition` to a boolean and returns `true_val` if it is `true`, `false_val` otherwise — nothing more exotic than that, but combined with a function call it becomes a compact way to pick between two computed values.
+
+```hcl
+variable "environment" {
+  type    = string
+  default = "dev"
+}
+
+locals {
+  instance_type = var.environment == "prod" ? "m6i.large" : "t3.micro"
+
+  backup_retention_days = var.environment == "prod" ? 30 : 7
+}
+
+resource "aws_instance" "web" {
+  ami           = var.ami_id
+  instance_type = local.instance_type
+}
+```
+
+`local.instance_type` resolves to exactly one of the two strings before `aws_instance.web` is ever planned — there is no branching left at apply time, only a single, already-resolved value sitting in `instance_type`. This is the pattern to reach for whenever a value depends on a single yes/no condition; for anything with more than two outcomes, `lookup` against a map (as shown above) or a `for` expression is usually clearer than nesting conditionals inside each other.
+
+## Dynamic blocks: a variable number of nested blocks
+
+`count` and `for_each` on a resource, covered in the next lesson, create a variable number of whole resources. A `dynamic` block solves a different, narrower problem: generating a variable number of repeated *nested* blocks inside a single resource, when the number of those nested blocks depends on a collection whose size is not known until the configuration runs.
+
+```hcl
+variable "allowed_ports" {
+  type        = list(number)
+  description = "TCP ports allowed inbound on the security group"
+  default     = [22, 443, 8080]
+}
+
+resource "aws_security_group" "app" {
+  name   = "app-sg"
+  vpc_id = aws_vpc.main.id
+
+  dynamic "ingress" {
+    for_each = var.allowed_ports
+
+    content {
+      from_port   = ingress.value
+      to_port     = ingress.value
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]
+    }
+  }
+}
+```
+
+There is exactly one `aws_security_group.app` resource, but the `dynamic "ingress"` block expands into one `ingress { ... }` block per entry in `var.allowed_ports` — three ports in, three `ingress` blocks out, with no `dynamic` block at all giving zero `ingress` blocks. Inside `content`, `ingress.value` refers to the current element, the same role `each.value` plays for a resource-level `for_each`. Reach for `dynamic` specifically when the repeated thing lives *inside* a resource, like `ingress` inside `aws_security_group`; reach for `count` or `for_each` on the resource itself when the repeated thing is the whole resource.
+
+<Mermaid title="A conditional and a function call resolve to one value before a resource is planned" code={conditionalFunctionDiagram} />
+
+export const conditionalFunctionDiagram = `flowchart LR
+  e["var.environment"] --> c{"environment == prod ?"}
+  c -->|true| a["m6i.large"]
+  c -->|false| b["t3.micro"]
+  a --> r["local.instance_type"]
+  b --> r
+  r --> res["aws_instance.web"]`;
+
+<Callout title="The one-line takeaway">
+Terraform's built-in **function** library covers string, collection, numeric, and networking transformations like `join`, `merge`, and `cidrsubnet`, and **`terraform console`** lets you evaluate any expression interactively against real state before committing it to a resource argument. A **conditional expression** — `condition ? true_val : false_val` — resolves to exactly one of two values before a resource is ever planned. A **`dynamic`** block generates a variable number of repeated *nested* blocks inside a single resource from a collection, which is a distinct problem from generating a variable number of whole resources with **`count`** or **`for_each`**, covered next.
+</Callout>
+
+export const quizExpressionsFunctions = [
+  {
+    q: 'What is terraform console primarily used for?',
+    options: [
+      'Applying infrastructure changes faster than terraform apply',
+      'Interactively evaluating expressions and functions against the current configuration and state, without touching real infrastructure',
+      'Generating a graphical diagram of the resource dependency graph',
+      'Formatting HCL files to the canonical style',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What are the three parts of a conditional expression?',
+    options: [
+      'variable, function, resource',
+      'condition, true_val, false_val, written as condition ? true_val : false_val',
+      'for, in, and a collection',
+      'count, index, and a resource label',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'When should you reach for a dynamic block instead of count or for_each on a resource?',
+    options: [
+      'When you want to create a variable number of whole resources',
+      'When you need to generate a variable number of repeated nested blocks inside a single resource, such as multiple ingress blocks in one aws_security_group',
+      'Dynamic blocks and count are always interchangeable',
+      'When you need to mark a value as sensitive',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What does cidrsubnet(prefix, newbits, netnum) do?',
+    options: [
+      'It merges two CIDR blocks into one larger block',
+      'It extends a parent CIDR prefix by newbits additional bits and fills them with netnum to produce one subnet address',
+      'It validates that a CIDR block does not overlap with an existing VPC',
+      'It converts a CIDR block into a list of individual IP addresses',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="variables-and-data-flow/expressions-functions-and-conditionals" questions={quizExpressionsFunctions} />
+
+<ProgressTracker client:visible id="variables-and-data-flow/expressions-functions-and-conditionals" />

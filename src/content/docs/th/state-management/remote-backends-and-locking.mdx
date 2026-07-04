@@ -1,0 +1,120 @@
+---
+title: 'Remote Backends and Locking'
+description: 'ทำไมทีมแชร์ local state file กันไม่ได้ วิธี config S3 backend พร้อม native locking และ locking ป้องกันอะไรจริง ๆ'
+sidebar:
+  order: 2
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## ไอเดียในหนึ่งประโยค
+
+**remote backend** เก็บ state ไว้ที่จุดกลางอย่าง S3 แทนที่จะอยู่บน laptop ของคนใดคนหนึ่ง ส่วน **locking** กันไม่ให้สองคนเขียนทับ state ที่ share กันนั้นพร้อมกัน
+
+## ทำไม local state ถึงใช้กับทีมไม่ได้
+
+โดย default `terraform.tfstate` จะอยู่บนเครื่องที่รัน `apply` ซึ่งโอเคสำหรับทดลองคนเดียว แต่พังทันทีเมื่อมีคนที่สองเข้ามาร่วม
+
+- เพื่อนร่วมทีม A รัน `apply` แล้วสร้าง VPC local state file บน laptop ของเขารู้เรื่องนี้แล้ว
+- เพื่อนร่วมทีม B บน laptop คนละเครื่อง ไม่เคยเห็น state file นั้นเลย เขารัน `plan` เทียบกับ local state ที่เก่าหรือว่างเปล่าของตัวเอง แล้วอาจพยายามสร้าง VPC ซ้ำ หรือได้ plan ที่ไม่สมเหตุสมผลเมื่อเทียบกับของจริงที่มีอยู่แล้ว
+- CI/CD pipeline เจอปัญหาเดียวกันแต่หนักกว่า pipeline runner คือ environment ใหม่ที่ใช้แล้วทิ้ง ไม่มี local state file ติดตัวมาเลย มันต้องการ state ฉบับกลางที่อ่านและเขียนได้ทุกครั้งที่รัน ไม่ใช่ copy ที่บังเอิญไปอยู่บน laptop ของใครสักคน
+
+ทางแก้คือย้าย state ออกจากเครื่องใครเครื่องคนหนึ่ง ไปไว้บน backend กลางที่ทั้งทีมและทุก CI run ชี้ไปที่เดียวกัน
+
+## Config S3 backend พร้อม native locking
+
+วิธีที่แนะนำในปัจจุบันสำหรับเก็บ Terraform state บน AWS คือ S3 bucket ที่ config เป็น backend พร้อมเปิด **native S3 state locking**
+
+```hcl
+terraform {
+  backend "s3" {
+    bucket       = "my-company-terraform-state"
+    key          = "networking/terraform.tfstate"
+    region       = "us-east-1"
+    use_lockfile = true
+  }
+}
+```
+
+`bucket` กับ `key` รวมกันระบุว่า object ไหนใน S3 ที่เก็บ state ของ configuration นี้ — `key` คือ path ภายใน bucket ดังนั้น configuration ต่างกัน (หรือ Terragrunt unit ต่างกัน) มักใช้ key คนละอันใน bucket เดียวกัน `use_lockfile = true` คือบรรทัดสำคัญ Terraform ใช้ conditional-write lock file ที่เก็บอยู่คู่กับ state object ตรงใน S3 เลย เพื่อจัดการ locking ไม่ต้องมี infrastructure สำหรับ locking แยกต่างหาก แค่ S3 bucket ก็พอ
+
+คุณจะยังเจอ pattern เก่าใน codebase ที่มีอยู่แล้ว ซึ่งใช้ DynamoDB table แยกสำหรับ locking
+
+```hcl
+# Legacy locking pattern — dynamodb_table is deprecated and scheduled for removal.
+# Prefer use_lockfile = true (shown above) in new configurations.
+terraform {
+  backend "s3" {
+    bucket         = "my-company-terraform-state"
+    key            = "networking/terraform.tfstate"
+    region         = "us-east-1"
+    dynamodb_table = "terraform-state-lock"
+  }
+}
+```
+
+pattern นั้นยังทำงานได้ และไม่ต้องตกใจถ้าคุณรับ codebase ที่ใช้แบบนี้มา แต่ `dynamodb_table` ตอนนี้เป็น argument ที่ deprecated แล้วบน S3 backend และมีแผนจะถูกลบออกในเวอร์ชันถัดไปของ Terraform configuration ใหม่ควรใช้ `use_lockfile = true` แทน มันทำหน้าที่เดียวกันโดยไม่ต้องสร้าง AWS resource ตัวที่สองมาดูแลและจ่ายเงินเพิ่ม
+
+## locking ป้องกันอะไรจริง ๆ
+
+ลองนึกภาพว่าไม่มี locking เลย สองคน หรือคนกับ CI run รัน `terraform apply` เทียบกับ state บน S3 เดียวกันในเวลาที่ใกล้กันมาก ทั้งคู่อ่าน state ปัจจุบัน ทั้งคู่คำนวณ plan และทั้งคู่เริ่มเขียนผลกลับไปที่ state object เดียวกัน ขึ้นอยู่กับ timing การเขียนครั้งที่สองอาจเขียนทับครั้งแรก — ทำให้การเปลี่ยนแปลงที่ record ไว้จาก run แรกหายไปเงียบ ๆ ทั้งที่ infrastructure ของ run แรกถูกเปลี่ยนจริงไปแล้ว หรือ state file อาจ corrupt ระหว่างเขียน
+
+lock เปลี่ยน race นี้ให้กลายเป็นคิว `apply` ตัวแรกที่เริ่มจะได้ lock ไป `apply` ตัวที่สองจะรอให้ lock ถูกปล่อย หรือ fail ทันทีพร้อม error ที่ชัดเจน ขึ้นอยู่กับ flag ที่ใช้ ไม่ว่าทางไหน run ตัวที่สองก็ไม่มีทางเขียนทับ state ของ run แรกในระหว่างที่มันยังทำงานอยู่
+
+```bash
+# A run that finds the state already locked fails fast with a clear message,
+# rather than corrupting the state file
+terraform apply
+# Error: Error acquiring the state lock
+```
+
+<Mermaid title="Two applies race for the same S3-backed state; the lock lets one through and makes the other wait" code={lockingDiagram} />
+
+export const lockingDiagram = `flowchart LR
+  eng1["Engineer A: terraform apply"] -->|acquires lock| s3["S3 state + lock file"]
+  eng2["CI run: terraform apply"] -->|blocked, waits or fails| s3
+  s3 -->|lock released after apply| eng2`;
+
+<Callout title="สรุปหนึ่งบรรทัด">
+**remote backend** อย่าง S3 ทำให้เพื่อนร่วมทีมทุกคนและทุก CI run เห็น state ฉบับกลางเดียวกัน แทนที่แต่ละเครื่องจะถือไฟล์ local ของตัวเองที่ค่อย ๆ เพี้ยนไปคนละทาง **locking** — ที่ปัจจุบัน config ด้วย `use_lockfile = true` ตรงบน S3 backend เลย ไม่ต้องมี DynamoDB table — ป้องกันไม่ให้ `apply` สองตัวเขียนทับ state ที่ share กันพร้อมกัน ซึ่งถ้าไม่มี lock อาจทำให้ state corrupt หรือทำให้การเปลี่ยนแปลงของ run หนึ่งหายไปเงียบ ๆ argument `dynamodb_table` แบบเก่ายังทำงานได้แต่ **deprecated** แล้วและมีแผนจะถูกลบ ควรใช้ `use_lockfile = true` กับ configuration ใหม่
+</Callout>
+
+export const quizBackends = [
+  {
+    q: 'ทำไม local terraform.tfstate ถึงพังลงทันทีที่มีเพื่อนร่วมทีมคนที่สองเริ่มรัน Terraform',
+    options: [
+      'local state file หมดอายุหลังผ่านไป 24 ชั่วโมง',
+      'แต่ละเครื่องรู้แค่การเปลี่ยนแปลงที่ apply จากเครื่องนั้นเอง ทำให้ laptop เครื่องที่สอง plan โดยเทียบกับ state ที่เก่าหรือไม่มีเลย',
+      'Terraform ปฏิเสธที่จะรันถ้ามีผู้ร่วมพัฒนามากกว่าหนึ่งคน',
+      'local state file เก็บ resource ได้แค่ตัวเดียว',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'use_lockfile = true บน S3 backend ให้อะไร และทำไมตอนนี้ถึงเป็นที่นิยมกว่า DynamoDB table',
+    options: [
+      'มันเปิด versioning บน S3 bucket ให้อัตโนมัติ',
+      'มันให้ native state locking โดยใช้ conditional-write lock file ตรงใน S3 เอง ทำให้ไม่ต้องมี DynamoDB table แยกที่ argument dynamodb_table แบบเก่าต้องการ',
+      'มันเข้ารหัส state file ที่ rest ซึ่ง DynamoDB locking ทำไม่ได้',
+      'มันไม่มีผลอะไรเลย DynamoDB locking ยังจำเป็นสำหรับความถูกต้องอยู่ดี',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'state locking ป้องกันอะไรจริง ๆ',
+    options: [
+      'มันกันไม่ให้ใครรัน terraform plan ได้เลย',
+      'มันกันไม่ให้ apply สองตัวเขียนทับ state file เดียวกันพร้อมกัน ซึ่งอาจทำให้ state corrupt หรือทำให้การเปลี่ยนแปลงหายไป',
+      'มันกันไม่ให้ Terraform อ่าน state file ได้เลย',
+      'มันกันไม่ให้ resource ถูกลบโดยไม่ตั้งใจ',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="state-management/remote-backends-and-locking" questions={quizBackends} />
+
+<ProgressTracker client:visible id="state-management/remote-backends-and-locking" />

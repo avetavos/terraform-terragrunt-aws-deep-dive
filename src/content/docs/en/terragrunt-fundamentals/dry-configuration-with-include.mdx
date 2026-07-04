@@ -1,0 +1,132 @@
+---
+title: 'DRY Configuration with include'
+description: 'How the include block and find_in_parent_folders let a unit inherit root.hcl, plus locals, read_terragrunt_config, and the inputs block.'
+sidebar:
+  order: 2
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## The idea in one sentence
+
+The `include` block is how a unit's `terragrunt.hcl` pulls in everything defined in `root.hcl` — or in any intermediate config file — without retyping any of it.
+
+## include and find_in_parent_folders
+
+Last lesson's `vpc/terragrunt.hcl` opened with this block, and it deserves a proper explanation now:
+
+```hcl
+# prod/us-east-1/vpc/terragrunt.hcl
+include "root" {
+  path = find_in_parent_folders("root.hcl")
+}
+```
+
+`find_in_parent_folders("root.hcl")` walks up the directory tree from wherever the current unit lives, one directory at a time, until it finds a file literally named `root.hcl`. `include "root"` then merges everything that file defines into the current unit's configuration, as though it had been typed there directly — the `remote_state` block, the generated `backend.tf`, the provider `generate` block, all of it.
+
+Why the search matters: it means the exact same `include` line works whether a unit sits one directory below `root.hcl` or five directories deep. Move a unit into a new subdirectory for a reorganization, and this line keeps working unchanged — it never hard-codes a relative path like `../../../root.hcl` that would break the moment the tree is reshaped.
+
+## locals and read_terragrunt_config for one level down
+
+`include` is not the only inheritance mechanism, and it is not always the right one — sometimes you want to share a smaller, more specific value with only part of the tree, not the whole thing. Picture an intermediate `region.hcl` file sitting one level below the true root, covering just the units that belong to a specific AWS region:
+
+```hcl
+# prod/us-east-1/region.hcl
+locals {
+  aws_region = "us-east-1"
+}
+```
+
+A unit under that region's directory reads it with `read_terragrunt_config()`, combined with the same `find_in_parent_folders()` you already know:
+
+```hcl
+# prod/us-east-1/vpc/terragrunt.hcl
+include "root" {
+  path = find_in_parent_folders("root.hcl")
+}
+
+locals {
+  region_vars = read_terragrunt_config(find_in_parent_folders("region.hcl"))
+}
+
+terraform {
+  source = "git::git@github.com:acme/infrastructure-modules.git//vpc?ref=v1.4.0"
+}
+
+inputs = {
+  aws_region = local.region_vars.locals.aws_region
+  cidr_block = "10.0.0.0/16"
+}
+```
+
+`read_terragrunt_config()` parses another Terragrunt config file and hands back its contents as a value, and that file's own `locals` block ends up nested under `.locals` on the result — hence `local.region_vars.locals.aws_region`. A unit under `prod/ap-southeast-1/` would have its own `region.hcl` defining `aws_region = "ap-southeast-1"`, while every unit anywhere in the tree still shares the same `root.hcl` for its backend and provider. Same root, different region per subtree, without a single unit hard-coding which region it belongs to inline.
+
+## inputs: the Terragrunt equivalent of a tfvars file
+
+Every example so far has ended with an `inputs = { ... }` block, and it deserves its own explanation. This is how a unit supplies its underlying Terraform module's input variables — functionally the same job a `.tfvars` file does for a plain Terraform root module, except expressed directly as Terragrunt HCL rather than as a separate file Terraform has to be told to load. Each key in `inputs` maps to a `variable` the module declares, and Terragrunt passes the whole block through to Terraform as `-var` values under the hood.
+
+Because `inputs` is regular HCL rather than a static `.tfvars` file, it can reference anything else in the same config — `local.region_vars.locals.aws_region` above is one example, and the next lesson introduces referencing another unit's outputs the same way.
+
+<Mermaid title="root.hcl and region.hcl combining into one unit's config" code={includeDiagram} />
+
+export const includeDiagram = `flowchart TD
+  root["root.hcl (remote_state + generate)"]
+  region["prod/us-east-1/region.hcl (locals.aws_region)"]
+  unit["prod/us-east-1/vpc/terragrunt.hcl"]
+  root -->|include + find_in_parent_folders| unit
+  region -->|read_terragrunt_config + find_in_parent_folders| unit
+  unit --> inputs["inputs = aws_region, cidr_block"]`;
+
+<Callout title="The one-line takeaway">
+`include "root" { path = find_in_parent_folders("root.hcl") }` walks up the directory tree to locate the shared root config and merges it into the current unit regardless of how deeply nested that unit is, which is what keeps a multi-unit tree **DRY**. For sharing a smaller, more localized value down only part of the tree — like a region — an intermediate file such as `region.hcl` combined with `locals` and `read_terragrunt_config(find_in_parent_folders("region.hcl"))` does the same walk-and-merge trick one level down. A unit's own `inputs = { ... }` block is the direct Terragrunt equivalent of a `.tfvars` file, and because it is real HCL it can reference `local.*` values pulled in from either level.
+</Callout>
+
+export const quizInclude = [
+  {
+    q: 'What does the include block with find_in_parent_folders actually do?',
+    options: [
+      'It copies root.hcl into the unit directory as a physical file',
+      'It walks up the directory tree to locate the named file and merges its configuration into the current unit, regardless of nesting depth',
+      'It only works if the unit is exactly one directory below the root',
+      'It deletes the unit own terragrunt.hcl and replaces it',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What is read_terragrunt_config used for with an intermediate file like region.hcl?',
+    options: [
+      'To apply the Terraform module described in region.hcl directly',
+      'To parse another Terragrunt config file and expose its contents, such as a locals block, to the current unit, sharing a value with only part of the tree rather than the whole thing',
+      'To generate a backend.tf file the same way remote_state does',
+      'To validate that region.hcl has no syntax errors and nothing else',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'The inputs block in a unit terragrunt.hcl is the Terragrunt equivalent of what?',
+    options: [
+      'A provider block',
+      'A tfvars file, supplying the underlying Terraform module input variables',
+      'A backend configuration file',
+      'A Terraform lock file',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Why does find_in_parent_folders keep working after a unit is moved deeper into a new subdirectory?',
+    options: [
+      'It does not keep working, the include path must be updated manually every time',
+      'It searches upward for the named file dynamically instead of relying on a hard-coded relative path',
+      'Terragrunt caches the original path and ignores the move',
+      'It only searches the current directory, so moving a unit has no effect either way',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="terragrunt-fundamentals/dry-configuration-with-include" questions={quizInclude} />
+
+<ProgressTracker client:visible id="terragrunt-fundamentals/dry-configuration-with-include" />

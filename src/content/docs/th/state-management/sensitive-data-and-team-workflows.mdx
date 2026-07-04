@@ -1,0 +1,152 @@
+---
+title: 'Sensitive Data and Team Workflows'
+description: 'sensitive = true ป้องกันอะไรจริง ๆ ทำไม state ต้องถูกดูแลเหมือน secret และช่องว่างที่ shared backend ยังแก้ไม่ได้สำหรับทีมที่โตขึ้น'
+sidebar:
+  order: 4
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## ไอเดียในหนึ่งประโยค
+
+การตั้งค่าเป็น `sensitive = true` ซ่อนค่านั้นจาก terminal แต่ค่ายังอยู่แบบ plaintext ใน state file เหมือนเดิม ดังนั้นทางแก้ที่แท้จริงคือปกป้อง state backend เอง และไม่เอา secret ระยะยาวเข้ามาไว้ใน Terraform เลยตั้งแต่แรก
+
+## sensitive = true ทำอะไรจริง ๆ
+
+ทั้ง `variable` และ `output` block รับ argument `sensitive` ได้
+
+```hcl
+variable "database_password" {
+  type      = string
+  sensitive = true
+}
+
+output "db_connect_string" {
+  value     = "Server=${aws_db_instance.main.address};Pwd=${var.database_password}"
+  sensitive = true
+}
+```
+
+พอตั้ง `sensitive = true` แล้ว Terraform จะซ่อนค่านั้นทุกที่ที่ปกติจะโผล่บน terminal หรือใน CI log — มัน print `(sensitive value)` ใน output ของ `terraform plan` และ `terraform apply` แทนค่าจริง และไม่ยอม print ค่าดิบจาก `terraform output` เว้นแต่คุณจะขอตรง ๆ ด้วย `terraform output db_connect_string` นี่คือ guardrail ที่มีประโยชน์จริง — มันกันไม่ให้ password เลื่อนผ่านหน้าจอไปใน CI log ที่แชร์กัน หรือ terminal ที่ screen-share อยู่โดยไม่ตั้งใจ
+
+สิ่งที่ต้องพูดให้ชัดคือความเข้าใจผิดที่พบบ่อย `sensitive = true` เป็น feature ด้าน **display** ไม่ใช่ feature ด้านการเข้ารหัส ค่าถูกคำนวณ เก็บ และ diff โดย Terraform เหมือนเดิมทุกอย่างไม่ว่าจะตั้ง sensitive หรือไม่ — มันยังถูกเขียนลง `terraform.tfstate` แบบ plaintext เต็ม ๆ พร้อม tag ทุกตัว ใครก็ตามที่อ่าน state file ดิบได้ ไม่ว่าจะจาก S3 bucket, `.tfstate` local หรือ `terraform state pull` ก็เห็น password ตัวนั้นนอนอยู่ใน JSON ตรง ๆ ไม่ว่าจะมี flag `sensitive` หรือไม่มีก็ตาม
+
+```bash
+terraform state pull | grep -A3 db_connect_string
+# "db_connect_string": {
+#   "value": "Server=mydb.abc123.us-east-1.rds.amazonaws.com;Pwd=S3cretPassword!",
+#   "type": "string"
+```
+
+## ปกป้อง state ที่ rest
+
+เพราะการตั้งค่าให้เป็น sensitive ไม่ได้เอาค่านั้นออกจาก state การป้องกันจริง ๆ ต้องเกิดที่ layer ของ storage ให้ดูแล `terraform.tfstate` เองเหมือนที่คุณดูแลไฟล์ `.env` ที่เต็มไปด้วย credential ของ production
+
+- **เข้ารหัส backend ที่ rest** สำหรับ S3 backend ที่พูดถึงในบทก่อน หมายถึงเปิด S3 server-side encryption (SSE) บน state bucket เพื่อให้ทุก object — รวมถึงทุก version ของ state file — ถูกเข้ารหัสบน disk ไม่ว่าใครจะเรียก bucket API
+- **จำกัดว่าใครอ่าน bucket ได้** IAM policy ที่จำกัด access ของ state bucket ให้เหลือแค่ role และ user ที่ต้องรัน Terraform จริง ๆ คือสิ่งที่กันไม่ให้คนที่ไม่ได้รับอนุญาตไปถึง plaintext ได้ ไม่ว่าจะเข้ารหัสที่ rest ไว้หรือไม่ก็ตาม — encryption at rest ป้องกันคนที่เข้าถึง disk ดิบ ไม่ใช่ป้องกันคนที่มี AWS credential ถูกต้องแล้วเรียก `s3:GetObject`
+
+```hcl
+resource "aws_s3_bucket" "state" {
+  bucket = "my-company-terraform-state"
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "state" {
+  bucket = aws_s3_bucket.state.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+```
+
+ถ้าเป็นไปได้ วิธีที่ดีกว่าคือหลีกเลี่ยงปัญหานี้ไปเลย อย่าเอา secret ระยะยาวใส่เข้าไปใน Terraform variable ตั้งแต่แรกถ้าดึงตอน apply ได้ `data` source ที่อ่านจาก secrets manager จะดึงค่าปัจจุบันตอน Terraform รัน โดยที่คุณไม่ต้องพิมพ์ secret ลงไฟล์ `.tf` หรือ `.tfvars` เลย
+
+```hcl
+data "aws_secretsmanager_secret_version" "db_password" {
+  secret_id = "prod/app-db/password"
+}
+
+resource "aws_db_instance" "main" {
+  identifier     = "app-db"
+  engine         = "postgres"
+  instance_class = "db.t3.micro"
+  username       = "app_admin"
+  password       = data.aws_secretsmanager_secret_version.db_password.secret_string
+}
+```
+
+ต้องเข้าใจให้ชัดว่าวิธีนี้แก้อะไรและไม่แก้อะไร ค่า secret ที่ resolve ออกมายังไปจบอยู่ใน state entry ของ `aws_db_instance.main` เหมือนเดิม เพราะ Terraform ต้อง record attribute ที่มันตั้งไว้ เหมือนความเสี่ยง plaintext จากบทแรกของ module นี้ สิ่งที่มันแก้ได้จริงคือ lifecycle ของ secret ในที่อื่น ๆ ทั้งหมด — มันไม่เคยถูกพิมพ์ลง variable ไม่เคยอยู่ในไฟล์ `.tfvars` ที่อาจโดน commit พลาด และการ rotate ใน Secrets Manager ก็ไม่ต้องแตะ Terraform configuration เลย การปกป้อง state backend เองยังคงเป็นส่วนที่ต่อรองไม่ได้
+
+## จุดที่ shared state เริ่มไม่พอ
+
+บทก่อนตั้ง S3 backend พร้อม locking ไว้แล้ว ซึ่งแก้ปัญหา "ทุกคนอ่านและเขียน state เดียวกันได้อย่างปลอดภัย" นั่นจำเป็น แต่ไม่พอเมื่อทีมโตเกินสองสามคน ถ้าไม่มีอะไรเพิ่มเติม การที่ "ทุกคนรัน `terraform apply` จาก laptop ของตัวเองเมื่อไหร่ก็ได้ตามใจ" ยังมีช่องว่างจริง ๆ อยู่
+
+- run `apply` ที่เกิดพร้อมกันไม่ทำให้ state เสียหายแล้วเพราะมี locking แต่มันเข้าคิวรอกัน — engineer คนที่สองแค่รอเฉย ๆ โดยไม่รู้ว่า run แรกกำลังทำอะไรอยู่หรือจะใช้เวลานานแค่ไหน
+- ไม่มีจุดตามธรรมชาติให้คนที่สอง review change ก่อนมันขึ้นจริง locking กันแค่ apply สองตัวไม่ให้แข่งกัน มันไม่ได้กัน engineer คนหนึ่งจาก apply change ที่ไม่มีใครเคยดูมาก่อน
+- engineer แต่ละคนต้องมี AWS credential ที่มีสิทธิ์พอจะรัน `apply` ได้จาก local ซึ่งเป็น blast radius ที่กว้างกว่าที่ทีมส่วนใหญ่อยากแจกให้ทุก laptop
+
+ทั้งหมดนี้ไม่ได้แปลว่า shared backend จากบทก่อนผิด มันเป็นสิ่งที่ต้องมีก่อน ไม่ใช่ความผิดพลาด แค่มันไม่ใช่เรื่องทั้งหมด การปิดช่องว่างนี้คือสิ่งที่ CI/CD สำหรับ infrastructure มีไว้ทำ — pipeline รัน `plan` บนทุก change ที่เสนอมาเพื่อ review ก่อนใครจะ apply และ `apply` รันจาก pipeline identity ที่ควบคุมได้ แทนที่จะรันจาก laptop ของแต่ละคน นี่เป็นหัวข้อของบทหลังในคอร์สนี้ ไม่ใช่สิ่งที่ต้องแก้ตรงนี้ — ประเด็นตอนนี้คือให้รู้จักรูปร่างของช่องว่างนี้ไว้ก่อน จะได้ไม่แปลกใจทีหลัง
+
+<Mermaid title="A sensitive variable is redacted from CLI output but still lands in state as plaintext, versus a secret pulled from Secrets Manager at apply time" code={sensitiveDataDiagram} />
+
+export const sensitiveDataDiagram = `flowchart LR
+  sv["variable with sensitive = true"] -->|redacted| cli["CLI output: (sensitive value)"]
+  sv -->|full value written| state["terraform.tfstate: plaintext"]
+  sm["Secrets Manager"] -->|data source at apply time| res["Resource attribute"]
+  res -->|attribute recorded| state`;
+
+<Callout title="สรุปหนึ่งบรรทัด">
+`sensitive = true` บน `variable` หรือ `output` ซ่อนค่าจาก **CLI output** อย่าง `plan`, `apply` และ `terraform output` เท่านั้น — มัน **ไม่** เข้ารหัสอะไรเลย และค่าเต็มยังถูกเขียนลง `terraform.tfstate` แบบ plaintext อยู่ดี การป้องกัน sensitive data ที่แท้จริงต้องอยู่ที่ layer ของ storage คือ **เข้ารหัส state backend ที่ rest** (S3 server-side encryption) และ **จำกัดสิทธิ์อ่าน** ด้วย IAM policy โดยดูแล state file เหมือน secret ตัวหนึ่ง ถ้าเป็นไปได้ ให้หลีกเลี่ยง secret ระยะยาวใน Terraform variable ไปเลย แล้วดึงมันจาก secrets manager ผ่าน `data` source ตอน apply แทน แม้จะมี S3 backend แบบ shared และ lock แล้ว ทีมที่พึ่งแค่ให้ทุกคน apply จาก laptop ของตัวเองยังขาด visibility เรื่อง concurrency และการ review ก่อน apply — ช่องว่างนี้คือสิ่งที่ CI/CD สำหรับ infrastructure จะมาปิดในบทหลังของคอร์สนี้
+</Callout>
+
+export const quizSensitiveWorkflows = [
+  {
+    q: 'การตั้ง sensitive = true บน Terraform variable ป้องกันอะไรจริง ๆ',
+    options: [
+      'มันเข้ารหัสค่านั้นทุกที่ที่ Terraform เก็บหรือส่งข้อมูล',
+      'มันซ่อนค่าจาก CLI output อย่าง plan, apply และ terraform output แต่ไม่เปลี่ยนวิธีที่ค่านั้นถูกเก็บ',
+      'มันกันไม่ให้ค่านั้นถูกเขียนลง state file เลย',
+      'มันหมุนเวียน (rotate) ค่านั้นให้อัตโนมัติตามตารางเวลา',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'database password ถูกตั้ง sensitive = true บน variable block ของมัน มันยังอ่านได้แบบ plaintext ที่ไหนไหม',
+    options: [
+      'ไม่ได้ ค่า sensitive จะไม่ถูก persist ไว้ที่ไหนเลยเมื่อถูกตั้งค่าแล้ว',
+      'ได้ มันยังถูกเขียนลง terraform.tfstate แบบ plaintext เหมือนกับตอนที่ไม่ได้ตั้ง sensitive ทุกประการ',
+      'ได้เฉพาะตอนที่ใส่ flag -sensitive เพิ่มระหว่าง apply ด้วย',
+      'ไม่ได้ Terraform เข้ารหัสค่าที่ตั้ง sensitive ให้อัตโนมัติก่อนเขียนลง state',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'วิธีป้องกัน sensitive data ที่เก็บอยู่ใน Terraform state file ที่แท้จริงคืออะไร',
+    options: [
+      'ตั้ง sensitive = true ให้ทุก variable และ output',
+      'เข้ารหัส state backend ที่ rest และจำกัดว่าใครอ่านได้ด้วย IAM policy โดยดูแล state file เหมือน secret',
+      'แค่ใส่ terraform.tfstate ลง .gitignore ก็เพียงพอแล้ว',
+      'เปลี่ยนชื่อ state file ให้หายากขึ้น',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'ทำไมการดึง secret จาก secrets manager ผ่าน data source มักดีกว่าการเก็บมันเป็น Terraform variable สำหรับ credential ระยะยาว',
+    options: [
+      'มันทำให้ secret ไม่ต้องอยู่ในไฟล์ .tf และ .tfvars และอยู่นอกวงจร rotation แม้ว่าค่าที่ resolve ออกมาจะยังไปจบใน resource attribute ที่ record ไว้ใน state ก็ตาม',
+      'มันกันไม่ให้ secret โผล่ใน state file เลยไม่ว่ากรณีใด',
+      'มันทำให้ไม่ต้องเข้ารหัส state backend อีกต่อไป',
+      'data source ใช้กับค่า sensitive ไม่ได้ เลยหลีกเลี่ยงปัญหานี้ไปได้ทั้งหมด',
+    ],
+    answer: 0,
+  },
+];
+
+<Quiz client:visible id="state-management/sensitive-data-and-team-workflows" questions={quizSensitiveWorkflows} />
+
+<ProgressTracker client:visible id="state-management/sensitive-data-and-team-workflows" />

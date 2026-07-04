@@ -1,0 +1,150 @@
+---
+title: 'Outputs and Locals'
+description: 'เปิดเผยค่าด้วย output block หลัง apply ทำ output ให้เป็น sensitive และใช้ locals คำนวณ expression ที่มีชื่อครั้งเดียวแล้วนำกลับมาใช้ซ้ำทั่วทั้ง configuration'
+sidebar:
+  order: 2
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## ไอเดียในหนึ่งประโยค
+
+`local` คือ expression ที่มีชื่อ คำนวณครั้งเดียวแล้วนำกลับมาใช้ซ้ำภายใน configuration ส่วน `output` คือการดึงค่าออกจาก configuration ให้มองเห็นได้หลัง `apply` — รวมกับ `variable` แล้วทั้งสามตัวนี้คือ named value สามแบบที่แยกจากกันชัดเจนใน Terraform
+
+## Locals: คำนวณค่าครั้งเดียวแล้วใช้ซ้ำ
+
+`variable` ถูกตั้งค่าโดยคนที่เรียกใช้ configuration และ `output` ถูกเปิดเผยให้คนที่นำไปใช้ต่อ ส่วน `local` ไม่ใช่ทั้งสองอย่าง มันเป็นความสะดวกภายใน เป็นชื่อที่ตั้งให้กับ expression เพื่อไม่ต้องเขียน expression เดิมซ้ำทุกครั้งที่ต้องใช้ผลลัพธ์ของมัน ไม่มีใครนอก configuration ตั้งค่า `local` ได้ และไม่มีใครนอก configuration อ่านค่ามันได้โดยตรงเช่นกัน
+
+```hcl
+locals {
+  name_prefix = "${var.environment}-${var.project}"
+
+  common_tags = {
+    Project     = var.project
+    Environment = var.environment
+    ManagedBy   = "terraform"
+  }
+
+  instance_count = var.environment == "prod" ? 5 : 2
+}
+
+resource "aws_instance" "web" {
+  count         = local.instance_count
+  ami           = var.ami_id
+  instance_type = var.instance_type
+
+  tags = merge(local.common_tags, {
+    Name = "${local.name_prefix}-web-${count.index}"
+  })
+}
+
+resource "aws_s3_bucket" "app_data" {
+  bucket = "${local.name_prefix}-app-data"
+  tags   = local.common_tags
+}
+```
+
+`local.common_tags` ถูกคำนวณครั้งเดียวจาก `var.project` กับ `var.environment` แล้วถูกอ้างอิงทั้งจาก `aws_instance.web` และ `aws_s3_bucket.app_data` ถ้าไม่มี local ตัวนี้ expression `merge(...)` เดิมกับคู่ key-value ทั้งสามตัวต้องถูก copy ไปใส่ทุก resource block ที่ต้องใช้ แล้วถ้าวันหนึ่งต้องเปลี่ยน scheme การ tag ก็ต้องไล่หาทุก copy ที่ว่านั้น `local.instance_count` ทำหน้าที่คล้ายกันกับ conditional เล็ก ๆ การตัดสินใจ "5 ตัวใน prod, 2 ตัวที่อื่น" ถูกเขียนไว้ครั้งเดียวแล้วอ้างอิงด้วยชื่อทุกที่ที่ต้องใช้ `local` ไม่มีทางถูก assign โดย caller และไม่ปรากฏใน `terraform plan` ในฐานะสิ่งที่ override ได้ — มันเป็นแค่ชื่อของค่าที่คำนวณไว้ภายใน configuration นี้เท่านั้น
+
+## Outputs: เปิดเผยค่าหลัง apply
+
+`output` block รับค่าที่มีอยู่ภายใน configuration ปกติแล้วคือ attribute ของ resource ที่เพิ่งรู้ค่าได้หลัง `apply` แล้วทำให้ค่านั้นมองเห็นได้จากภายนอก configuration `description` ไว้บอกความหมายของค่า และ `sensitive = true` ซ่อนค่าจาก CLI output ทั่วไปเหมือนกับที่ทำบน `variable`
+
+```hcl
+output "web_instance_ids" {
+  description = "IDs of the EC2 instances created for the web tier"
+  value       = aws_instance.web[*].id
+}
+
+output "app_data_bucket_arn" {
+  description = "ARN of the S3 bucket used for application data"
+  value       = aws_s3_bucket.app_data.arn
+}
+
+output "db_password" {
+  description = "Master password generated for the RDS instance"
+  value       = aws_db_instance.main.password
+  sensitive   = true
+}
+```
+
+```bash
+# List every output and its value
+terraform output
+
+# Print one output's value, unquoted for scripting
+terraform output web_instance_ids
+
+# Machine-readable output, for piping into jq or another tool
+terraform output -json app_data_bucket_arn
+```
+
+`terraform output` เฉย ๆ จะ print ทุก output ที่ declare ไว้หลัง `apply` ล่าสุด `terraform output <name>` print เฉพาะตัวเดียว และ `terraform output -json` render ค่า (หรือทุกค่า ถ้าไม่ระบุชื่อ) ออกมาเป็น JSON ซึ่งเหมาะกับตอนที่ CI pipeline หรือ script อื่นต้องเอาผลลัพธ์ไปใช้แบบ programmatic ไม่ใช่ให้คนอ่านเป็น plain text `sensitive = true` บน `db_password` ทำงานเหมือนกับตอนอยู่บน variable เป๊ะ ๆ Terraform จะ print `(sensitive value)` ใน output ของ `plan`/`apply` และใน `terraform output` เฉย ๆ แต่ `terraform output db_password` ยังคง print ค่าจริงออกมาถ้าระบุชื่อตรง ๆ และค่ายังถูกเก็บเป็น plain text ใน state อยู่ดี มันคือการป้องกันตอนแสดงผลบน terminal กับ log ไม่ใช่ access control
+
+## Outputs คือกลไกของการ compose
+
+ภายใน root configuration เดียว `output` ส่วนใหญ่เป็นแค่ข้อมูลไว้ดู เป็นวิธีสะดวกในการโชว์ค่าให้คนที่รัน `terraform apply` เห็นเฉย ๆ ความสำคัญจริง ๆ ของมันจะเห็นชัดตอนที่ configuration ไม่ได้เป็นก้อนเดียวโดด ๆ อีกต่อไป เวลาแยก infrastructure ออกเป็น module, module ไม่มีทางอื่นเลยที่จะส่งค่าที่คำนวณไว้กลับไปให้คนเรียกมันได้ นอกจากผ่าน `output` block ของตัวเอง — module เรื่อง Modules ในคอร์สนี้จะพูดถึง `module.<name>.<output>` แบบละเอียดทีหลัง เวลาแยก infrastructure ออกเป็น Terragrunt unit ที่ deploy แยกกันแทน `dependency` block จะอ่าน output ของ unit อื่นเพื่อเชื่อม unit เข้าด้วยกันโดยไม่ต้อง hard-code ค่าใด ๆ ระหว่างกันเลย — pattern นี้จะมี module Terragrunt แยกไว้พูดถึงทีหลัง ทั้งสองกรณีใช้กลไกเดียวกันกับที่เห็นตรงนี้ ค่าถูกรู้ขึ้นมาภายใน configuration หนึ่ง `output` block เปิดเผยมันออกมา แล้วสิ่งอื่น ไม่ว่าจะเป็น parent module หรือ dependent unit ก็นำไปใช้ต่อ
+
+<Mermaid title="A local feeds two resources, and a resource attribute becomes an output" code={localsOutputsDiagram} />
+
+export const localsOutputsDiagram = `flowchart LR
+  ve["var.environment"] --> lp["local.name_prefix"]
+  vp["var.project"] --> lp
+  lp --> ri["aws_instance.web"]
+  lp --> rb["aws_s3_bucket.app_data"]
+  rb --> ob["output app_data_bucket_arn"]
+  ob --> dep["dependency block or module output reference"]`;
+
+<Callout title="The one-line takeaway">
+**`local`** คือ expression ที่มีชื่อ คำนวณครั้งเดียวภายใน configuration แล้วนำกลับมาใช้ซ้ำทุกที่ที่ต้องใช้ผล ไม่มีใครนอก configuration ตั้งค่าหรืออ่านมันโดยตรงได้ ทำให้มันต่างจากทั้ง **`variable`** ที่ caller ส่งเข้ามา และ **`output`** ที่มองเห็นได้จากภายนอก **`output`** block เปิดเผยค่าหลัง `apply` อ่านได้ด้วย `terraform output`, `terraform output <name>` หรือแบบ machine-readable ผ่าน `terraform output -json` ส่วน `sensitive = true` ซ่อนค่าจาก CLI output ธรรมดาเหมือนกับที่ทำบน variable โดยไม่ได้ตัดค่าออกจาก **state** ไปด้วย นอกเหนือจาก root configuration เดียว outputs คือสิ่งที่ทำให้ composition เกิดขึ้นได้ มันคือวิธีที่ module ส่งค่ากลับไปให้คนเรียก และวิธีที่ `dependency` block ใน Terragrunt อ่านค่าจาก unit หนึ่งไปยังอีก unit หนึ่ง
+</Callout>
+
+export const quizOutputsAndLocals = [
+  {
+    q: 'ความต่างหลักระหว่าง local กับ output คืออะไร',
+    options: [
+      'local ตั้งค่าโดย user ส่วน output คำนวณอัตโนมัติ',
+      'local เป็น expression ที่มีชื่อไว้ใช้ซ้ำภายใน configuration ส่วน output เปิดเผยค่าออกไปภายนอกหลัง apply',
+      'ไม่มีความต่างจริง ๆ เป็น syntax คนละแบบของ feature เดียวกัน',
+      'local เก็บได้แค่ string ส่วน output เก็บ type ไหนก็ได้',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'local ต่างจาก variable อย่างไร',
+    options: [
+      'local คำนวณจาก expression ภายใน configuration ส่วน variable คือค่าที่ caller ส่งเข้ามาจากภายนอก',
+      'local มี default value เสมอ ส่วน variable ไม่มีเลย',
+      'local ตั้งค่าด้วย -var บน command line ได้ ส่วน variable ทำไม่ได้',
+      'ทั้งสองเหมือนกันทุกอย่าง ต่างแค่ keyword ของ block',
+    ],
+    answer: 0,
+  },
+  {
+    q: 'ทำไม output ถึงสำคัญกับการ compose infrastructure ทั้งที่ module กับ Terragrunt dependency จะพูดละเอียดทีหลัง',
+    options: [
+      'output เข้ารหัสค่าให้อัตโนมัติก่อนส่งระหว่าง module',
+      'output คือกลไกเดียวที่ module หรือ unit ที่ deploy แยกกันมีไว้ส่งค่าที่คำนวณไว้กลับไปให้คนนำไปใช้',
+      'output ทำให้ไม่ต้องใช้ variable อีกต่อไปเมื่อเริ่มใช้ module',
+      'ต้องมี output ก่อนถึงจะสร้าง resource ได้',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'terraform output -json มีประโยชน์อย่างไร',
+    options: [
+      'ลบ output ทั้งหมดออกจาก state file',
+      'render ค่า output เป็น JSON เพื่อให้ script หรือ CI pipeline นำไปใช้แบบ programmatic แทนที่จะให้คนอ่าน plain text',
+      'ทำให้ output ทุกตัวเป็น sensitive อัตโนมัติ',
+      'ต้องรันก่อน terraform apply จะสำเร็จได้เสมอ',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="variables-and-data-flow/outputs-and-locals" questions={quizOutputsAndLocals} />
+
+<ProgressTracker client:visible id="variables-and-data-flow/outputs-and-locals" />

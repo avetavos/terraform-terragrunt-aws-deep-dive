@@ -1,0 +1,119 @@
+---
+title: 'Dependencies Between Units'
+description: 'dependency block ส่ง output จาก unit หนึ่งไปให้อีก unit ข้าม state ที่แยกกันได้ยังไง บวกกับ mock_outputs และลำดับการ apply'
+sidebar:
+  order: 3
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## ไอเดียในหนึ่งประโยค
+
+`dependency` block ทำให้ unit หนึ่งอ่าน output ของอีก unit ข้าม state boundary ที่แยกทั้งสองออกจากกันได้ และ Terragrunt ก็ใช้ block เดียวกันนี้คำนวณลำดับที่ unit ต่าง ๆ ต้องถูก apply
+
+## ทำไม module composition ถึงไม่พอแล้ว
+
+ใน module Modules คุณเห็น output-to-input composition แล้ว output ของ module หนึ่งป้อนตรงเข้า input argument ของอีก module ภายใน `main.tf` เดียว evaluate เป็น Terraform plan เดียวกับ state ไฟล์เดียว มันทำงานได้เพราะทั้งสอง module อยู่ใน apply เดียวกัน
+
+Terragrunt unit ตั้งใจทำลาย assumption นั้นทิ้ง unit `vpc` กับ unit `ec2` ต่างมี `terragrunt.hcl` ของตัวเองและ state ไฟล์แยกของตัวเอง apply กันอย่างอิสระ `module.vpc.outputs.vpc_id` ที่อ้างอิงตรง ๆ แบบตอนอยู่ใน Terraform config เดียว จากมุมมองของ unit `ec2` มันไม่มีอยู่จริงเลย เพราะไม่มี config ไฟล์ที่ share กันให้ reference นั้นอยู่ข้างใน ต้องมีอะไรสักอย่างอ่านข้าม state boundary นั้นตรง ๆ และสิ่งนั้นคือ `dependency` block
+
+## dependency: อ่านข้าม state boundary
+
+```hcl
+# ec2/terragrunt.hcl
+include "root" {
+  path = find_in_parent_folders("root.hcl")
+}
+
+terraform {
+  source = "git::git@github.com:acme/infrastructure-modules.git//ec2?ref=v1.4.0"
+}
+
+dependency "vpc" {
+  config_path = "../vpc"
+
+  mock_outputs = {
+    vpc_id = "mock-vpc-id"
+  }
+
+  mock_outputs_allowed_terraform_commands = ["plan"]
+}
+
+inputs = {
+  vpc_id = dependency.vpc.outputs.vpc_id
+}
+```
+
+`config_path` ชี้ไปที่ directory ของอีก unit หนึ่ง ไม่ใช่ Terraform module แต่เป็น Terragrunt unit ก่อนรัน Terragrunt จะรัน `terraform output` กับ state จริงของ unit นั้น แล้ว expose ทุก output ที่เจอเป็น `dependency.vpc.outputs.<name>` ให้ใช้ได้ทุกที่ใน config ของ unit นี้ รวมถึงข้างใน `inputs` ด้วย
+
+## mock_outputs: ทำให้ plan สำเร็จได้ก่อน dependency จะมีจริง
+
+`dependency.vpc.outputs.vpc_id` จะมีค่าจริงก็ต่อเมื่อ unit `vpc` ถูก apply ไปแล้วอย่างน้อยหนึ่งครั้ง มีสองสถานการณ์ที่ทำลาย assumption นี้ คือตอนตั้ง environment ใหม่เอี่ยมครั้งแรก ที่ยังไม่มีอะไรถูก apply เลย และตอน CI validate pull request ที่แก้แค่ไฟล์ของ unit `ec2` ซึ่งไม่มีใครอยากให้ plan fail แค่เพราะ unit อื่นที่ไม่เกี่ยวข้องยังไม่ถูก apply ใน environment นั้น
+
+`mock_outputs` มาปิด gap นี้พอดี มันให้ค่า placeholder ที่ Terragrunt สลับใช้แทนทุกครั้งที่ output จริงยังไม่มี และ `mock_outputs_allowed_terraform_commands` จำกัดว่า command ไหนถึง fallback ไปใช้ค่านั้นได้ `["plan"]` ข้างบนแปลว่า `plan` บน `ec2` สำเร็จได้ด้วย `vpc_id = "mock-vpc-id"` แม้ยังไม่มี state จริงของ `vpc` เลย ในขณะที่ `apply` ยังคงปฏิเสธไม่ยอมรันกับค่าปลอม และบังคับให้ dependency จริงถูก apply ก่อนเสมอ
+
+## Terragrunt คำนวณลำดับ unit ให้เองอัตโนมัติยังไง
+
+Terraform เองก็คำนวณลำดับการรันภายใน state เดียวอยู่แล้ว คือ dependency graph ระหว่าง resource แต่ละตัว `dependency` block ส่งข้อมูลแบบเดียวกันนี้ให้ Terragrunt ในระดับที่สูงขึ้นมาอีกชั้น คือระหว่าง unit ทั้งก้อน เพราะ `ec2` ประกาศ `dependency` ไปที่ `vpc` Terragrunt ก็รู้ว่าต้อง apply `vpc` ก่อน ขยายแบบนี้ไปทั่ว tree ที่มีหลายสิบ unit จริง ๆ Terragrunt จะสร้างกราฟเต็มรูปแบบจากทุก `dependency` block ที่มันเจอ แล้วเดินตามลำดับที่ถูกต้องเวลามี command ไหนก็ตามที่แตะมากกว่าหนึ่ง unit พร้อมกัน ซึ่งจะพูดถึงเต็ม ๆ ในบทถัดไป โดยไม่ต้องมีใครจำหรือ maintain ลำดับนั้นด้วยมือเอง
+
+<Mermaid title="dependency block ส่ง output ของ vpc เข้าไปเป็น inputs ของ ec2" code={dependencyDiagram} />
+
+export const dependencyDiagram = `flowchart LR
+  vpcstate["vpc unit state (applied separately)"] --> vpcout["vpc outputs: vpc_id"]
+  vpcout --> dep["ec2 terragrunt.hcl: dependency vpc block"]
+  dep --> ecin["ec2 inputs: vpc_id = dependency.vpc.outputs.vpc_id"]
+  mock["mock_outputs: vpc_id = mock-vpc-id"] -.->|lets plan succeed before vpc is applied| dep`;
+
+<Callout title="สรุปหนึ่งบรรทัด">
+module composition (output ป้อนเข้า input) ทำงานได้แค่ภายใน Terraform apply เดียวกับ state ไฟล์เดียวเท่านั้น ส่วน Terragrunt unit สองตัวต่างเก็บ state แยกกัน ดังนั้น **dependency** block คือตัวปิด gap นั้น เพราะมัน expose output จริงของอีก unit เป็น `dependency.<name>.outputs.<output>` ให้อ้างอิงได้ทุกที่ใน unit ปัจจุบัน รวมถึงใน `inputs` ด้วย **mock_outputs** (scope ด้วย `mock_outputs_allowed_terraform_commands`) ทำให้ command อย่าง `plan` สำเร็จได้ด้วยค่า placeholder ก่อนที่ dependency จริงจะเคยถูก apply เลย ในขณะที่ `apply` ยังคงต้องการของจริงเสมอ Terragrunt อ่านทุก `dependency` block ทั่ว tree ของ unit เพื่อสร้างกราฟอีกชั้นเหนือ DAG ระดับ resource ของ Terraform เอง แล้วใช้มันคำนวณลำดับ apply ที่ถูกต้องให้อัตโนมัติ
+</Callout>
+
+export const quizDependency = [
+  {
+    q: 'ทำไม output-to-input module composition จาก module Modules ถึงไม่พอสำหรับ Terragrunt unit สองตัว',
+    options: [
+      'Terragrunt unit ไม่มี output ได้เลย',
+      'แต่ละ unit มี state แยกของตัวเองและ apply อิสระของตัวเอง จึงไม่มี config ที่ share กันให้ output ของ unit หนึ่งถูก reference ตรง ๆ จากอีก unit',
+      'module composition ใช้ได้แค่กับ AWS resource เท่านั้น',
+      'unit apply ใน AWS account เดียวกันไม่ได้',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'mock_outputs ให้อะไร',
+    options: [
+      'ค่า output จริงที่ดึงมาจาก apply ครั้งก่อนที่ cache ไว้',
+      'ค่า placeholder ที่ใช้ตอน output จริงของ dependency ยังไม่มี มีประโยชน์กับ plan บน environment ใหม่เอี่ยม หรือใน CI สำหรับ pull request ที่แก้แค่ไฟล์ของ unit เดียว',
+      'วิธี skip การ apply dependency แบบถาวร',
+      'รายชื่อ AWS region ที่ unit หนึ่งได้รับอนุญาตให้รัน',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Terragrunt คำนวณลำดับ apply ที่ถูกต้องข้าม unit ที่พึ่งพากันหลายตัวได้ยังไง',
+    options: [
+      'เรียงตามตัวอักษรของชื่อ directory',
+      'สร้างกราฟจากทุก dependency block ทั่ว unit อีกชั้นเหนือ DAG ระดับ resource ของ Terraform เองที่ทำงานภายใน state เดียว',
+      'unit ถูก apply ตามลำดับที่ list ไว้ใน root.hcl เสมอ',
+      'ลำดับถูก fix ไว้ตายตัว dependency block เปลี่ยนอะไรไม่ได้',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'mock_outputs_allowed_terraform_commands ควบคุมอะไร',
+    options: [
+      'AWS IAM permission ที่ unit ต้องใช้',
+      'command ไหนบ้าง เช่น plan ที่ได้รับอนุญาตให้ fallback ไปใช้ mock_outputs แทนที่จะต้องมี dependency จริงถูก apply ไปแล้ว',
+      'Terraform version ที่ unit ใช้',
+      'ว่า dependency block จะถูกรวมอยู่ใน run --all หรือไม่',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="terragrunt-fundamentals/dependencies-between-units" questions={quizDependency} />
+
+<ProgressTracker client:visible id="terragrunt-fundamentals/dependencies-between-units" />

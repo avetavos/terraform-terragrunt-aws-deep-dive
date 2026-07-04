@@ -1,0 +1,123 @@
+---
+title: 'Module Versioning and Registries'
+description: 'Why pinning a module version matters, how the pessimistic constraint operator works, and when a private module source makes sense.'
+sidebar:
+  order: 3
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## The idea in one sentence
+
+An unpinned module `source` can silently resolve to a different, newer version the next time someone runs `init`, so pinning a `version` constraint is the same discipline you already apply to the provider lock file, just aimed at module code instead of provider code.
+
+## Why an unpinned module version is a silent risk
+
+Registry and Git-tag-referenced modules are not frozen in place the way a local relative path is. If a `module` block has no `version` constraint, running `terraform init -upgrade` — or even a fresh `init` in a CI pipeline that has never run before — can pull in a newer release of that module without anyone reviewing its changelog first. A minor-looking upgrade can rename a variable, change a default, or restructure the resources it creates, and none of that shows up until `plan` or `apply` starts behaving differently than it did yesterday.
+
+```hcl
+# unpinned - always resolves to the latest version on init -upgrade
+module "vpc" {
+  source = "terraform-aws-modules/vpc/aws"
+}
+```
+
+This is exactly the same failure mode the provider lock file exists to prevent, just one level up: instead of a provider plugin changing out from under you, it is a module's own internal implementation changing out from under you.
+
+## The pessimistic constraint operator: version = "~> 5.0"
+
+Pinning a Registry or Git-tag module with a `version` argument fixes this. The common pattern is the pessimistic constraint operator, `~>`:
+
+```hcl
+# pinned - allows 5.x patch and minor upgrades, blocks a 6.0 major bump
+module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "~> 5.0"
+}
+```
+
+`~> 5.0` means "allow any version greater than or equal to `5.0`, up to but not including `6.0`." In other words, it lets Terraform pick up patch and minor releases within the `5.x` line — bug fixes and backward-compatible additions — while refusing to silently jump to `6.0`, where a major version bump signals the module's authors are telling you to expect breaking changes. You still choose when to take that jump, and you can read the module's changelog first.
+
+## Private module sources and publishing your own module
+
+Not every module belongs on the public Registry. A module that encodes one company's specific networking layout, naming conventions, or compliance requirements has no business being published for the world to see. For these, an organization typically uses a **private Git repository** or a **private module registry** — HCP Terraform's private registry, or a self-hosted equivalent — so the module stays versioned and discoverable internally without ever becoming public.
+
+```hcl
+# private Git repository
+module "internal_networking" {
+  source = "git::ssh://git@github.com/acme-corp/terraform-modules.git//networking?ref=v2.1.0"
+}
+
+# private module registry (e.g. HCP Terraform)
+module "internal_networking" {
+  source  = "app.terraform.io/acme-corp/networking/aws"
+  version = "~> 2.1"
+}
+```
+
+If you do want to publish a module publicly, the Terraform Registry expects a specific repository naming convention: `terraform-<PROVIDER>-<NAME>`, for example `terraform-aws-vpc`. The Registry parses this name to figure out which provider the module targets and what to call it, so a repository that does not follow the pattern will not publish correctly.
+
+<Mermaid title="A pinned module version versus an unpinned one that can silently resolve to a newer release" code={moduleVersioningDiagram} />
+
+export const moduleVersioningDiagram = `flowchart TB
+  subgraph pinned["Pinned version"]
+    p1["version = ~> 5.0"] --> p2["terraform init always resolves within 5.x"]
+  end
+  subgraph unpinned["Unpinned version"]
+    u1["no version constraint"] --> u2["terraform init -upgrade may resolve 6.0"]
+    u2 --> u3["breaking changes applied without changelog review"]
+  end`;
+
+<Callout title="The one-line takeaway">
+An unpinned module `source` can silently resolve to a newer, breaking version the next time `init` runs, so Registry and Git-tag modules should carry a `version` constraint just like providers do in the lock file. The pessimistic constraint operator, `version = "~> 5.0"`, allows patch and minor upgrades within the `5.x` line while blocking a `6.0` major bump until you choose to take it. Organization-specific modules that should not be public usually live in a **private Git repository** or a **private module registry** instead of the public Registry, and a module you do want to publish publicly must follow the `terraform-<PROVIDER>-<NAME>` repository naming convention, such as `terraform-aws-vpc`.
+</Callout>
+
+export const quizModuleVersioning = [
+  {
+    q: 'What risk does leaving a Registry or Git-tag module source without a version constraint introduce',
+    options: [
+      'No risk, Terraform always reuses whatever version was used the first time regardless of constraints',
+      'A future terraform init -upgrade or a fresh CI init could silently pull in a newer version with breaking changes, applied without anyone reviewing the module changelog first',
+      'It only affects terraform fmt output and has no effect on plan or apply',
+      'It forces every caller of the module to use the exact same Terraform CLI version',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What does version = "~> 5.0" allow and what does it block',
+    options: [
+      'It allows any version at all, including 6.0 and above, with no restriction',
+      'It allows only exactly version 5.0 and nothing else',
+      'It allows 5.x patch and minor upgrades but blocks a 6.0 major version bump',
+      'It blocks all upgrades entirely until the constraint is manually removed',
+    ],
+    answer: 2,
+  },
+  {
+    q: 'Why might an organization use a private Git repository or private module registry instead of the public Terraform Registry for a module',
+    options: [
+      'Because private sources are always faster to download than public Registry modules',
+      'Because the module encodes company-specific infrastructure details that should not be published publicly, while still needing to be versioned and discoverable internally',
+      'Because the public Terraform Registry does not support the version argument',
+      'Because private sources do not require a source argument in the module block',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What repository naming convention does the public Terraform Registry expect for publishing your own module',
+    options: [
+      'any-name-you-want-aws',
+      'terraform-<PROVIDER>-<NAME>, for example terraform-aws-vpc',
+      '<NAME>-terraform-module',
+      'aws-terraform-<NAME>',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="modules/module-versioning-and-registries" questions={quizModuleVersioning} />
+
+<ProgressTracker client:visible id="modules/module-versioning-and-registries" />

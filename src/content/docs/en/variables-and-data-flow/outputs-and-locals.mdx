@@ -1,0 +1,150 @@
+---
+title: 'Outputs and Locals'
+description: 'Exposing values with output blocks after apply, marking an output sensitive, and using locals to compute a named expression once and reuse it across a configuration.'
+sidebar:
+  order: 2
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## The idea in one sentence
+
+A `local` is a named expression computed once and reused inside a configuration, while an `output` takes a value out of a configuration and makes it visible after `apply` — together with `variable`, they are the three distinct kinds of named value in Terraform.
+
+## Locals: computing a value once and reusing it
+
+A `variable` is set by whoever calls the configuration, and an `output` is exposed to whoever consumes it. A `local` is neither — it is an internal convenience, a name you give to an expression so you do not have to repeat that expression every time you need its result. Nobody outside the configuration can set a `local`, and nobody outside the configuration can read one directly either.
+
+```hcl
+locals {
+  name_prefix = "${var.environment}-${var.project}"
+
+  common_tags = {
+    Project     = var.project
+    Environment = var.environment
+    ManagedBy   = "terraform"
+  }
+
+  instance_count = var.environment == "prod" ? 5 : 2
+}
+
+resource "aws_instance" "web" {
+  count         = local.instance_count
+  ami           = var.ami_id
+  instance_type = var.instance_type
+
+  tags = merge(local.common_tags, {
+    Name = "${local.name_prefix}-web-${count.index}"
+  })
+}
+
+resource "aws_s3_bucket" "app_data" {
+  bucket = "${local.name_prefix}-app-data"
+  tags   = local.common_tags
+}
+```
+
+`local.common_tags` is computed once from `var.project` and `var.environment`, then referenced by both `aws_instance.web` and `aws_s3_bucket.app_data`. Without it, the same `merge(...)` expression and the same three key-value pairs would have to be copied into every resource block that needs them, and a later change to the tagging scheme would mean hunting down every copy. `local.instance_count` does the same job for a small conditional: the decision "5 in prod, 2 elsewhere" is written once and referenced by name wherever it is needed. A `local` is never assigned by a caller and never appears in `terraform plan` as something you can override — it is purely a name for a computed value inside this configuration.
+
+## Outputs: exposing a value after apply
+
+An `output` block takes a value that exists inside a configuration — usually an attribute of a resource that only becomes known after `apply` — and makes it available outside that configuration. `description` documents what the value means, and `sensitive = true` masks it from ordinary CLI output the same way it does on a `variable`.
+
+```hcl
+output "web_instance_ids" {
+  description = "IDs of the EC2 instances created for the web tier"
+  value       = aws_instance.web[*].id
+}
+
+output "app_data_bucket_arn" {
+  description = "ARN of the S3 bucket used for application data"
+  value       = aws_s3_bucket.app_data.arn
+}
+
+output "db_password" {
+  description = "Master password generated for the RDS instance"
+  value       = aws_db_instance.main.password
+  sensitive   = true
+}
+```
+
+```bash
+# List every output and its value
+terraform output
+
+# Print one output's value, unquoted for scripting
+terraform output web_instance_ids
+
+# Machine-readable output, for piping into jq or another tool
+terraform output -json app_data_bucket_arn
+```
+
+`terraform output` on its own prints every declared output after the most recent `apply`. `terraform output <name>` prints just one, and `terraform output -json` renders the value (or all values, if you omit a name) as JSON, which is what you want when a CI pipeline or another script needs to consume the result programmatically rather than read it as a human. The `sensitive = true` argument on `db_password` behaves exactly like it does on a variable: Terraform prints `(sensitive value)` in `plan`/`apply` output and in a bare `terraform output`, but `terraform output db_password` still prints the real value when you ask for it by name, and the value is still stored in plain text in state. It is display protection for terminals and logs, not access control.
+
+## Outputs as the mechanism for composition
+
+Inside a single root configuration, an `output` is mostly informational — a convenient way to surface a value for a human running `terraform apply` to glance at. Its real importance shows up once a configuration stops being a single, self-contained thing. When you split infrastructure into modules, a module has no other way to hand a computed value back to whoever called it except through its `output` blocks — the Modules module later in this course covers `module.<name>.<output>` references in depth. When you split infrastructure into independently-deployed Terragrunt units instead, a `dependency` block reads another unit's outputs to wire units together without ever hard-coding a value between them — that pattern gets its own treatment in a later Terragrunt module. In both cases, the mechanism is the same one shown here: a value becomes known inside one configuration, an `output` block exposes it, and something else — a parent module or a dependent unit — consumes it.
+
+<Mermaid title="A local feeds two resources, and a resource attribute becomes an output" code={localsOutputsDiagram} />
+
+export const localsOutputsDiagram = `flowchart LR
+  ve["var.environment"] --> lp["local.name_prefix"]
+  vp["var.project"] --> lp
+  lp --> ri["aws_instance.web"]
+  lp --> rb["aws_s3_bucket.app_data"]
+  rb --> ob["output app_data_bucket_arn"]
+  ob --> dep["dependency block or module output reference"]`;
+
+<Callout title="The one-line takeaway">
+A **`local`** is a named expression computed once inside a configuration and reused wherever you need its result — nobody outside the configuration can set it or read it directly, which makes it distinct from both a caller-supplied **`variable`** and an externally-visible **`output`**. An **`output`** block exposes a value after `apply`, readable with `terraform output`, `terraform output <name>`, or machine-readable via `terraform output -json`; `sensitive = true` masks it from plain CLI output the same way it does for variables, without removing it from **state**. Beyond a single root configuration, outputs are what make composition possible — they are how a module hands a value back to its caller, and how a `dependency` block in Terragrunt reads a value from one independently-deployed unit into another.
+</Callout>
+
+export const quizOutputsAndLocals = [
+  {
+    q: 'What is the main difference in purpose between a local and an output?',
+    options: [
+      'A local is user-settable and an output is computed automatically',
+      'A local is a named expression for internal reuse within a configuration, while an output exposes a value externally after apply',
+      'There is no real difference, they are interchangeable syntax for the same feature',
+      'A local can only hold strings and an output can hold any type',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'How does a local differ from a variable?',
+    options: [
+      'A local is computed from an expression inside the configuration, while a variable is a value a caller supplies from outside',
+      'A local always has a default value and a variable never does',
+      'A local can be set with -var on the command line, a variable cannot',
+      'They are identical except for the block keyword used',
+    ],
+    answer: 0,
+  },
+  {
+    q: 'Why do outputs matter for composing infrastructure, even though modules and Terragrunt dependencies are covered in more depth later',
+    options: [
+      'Outputs automatically encrypt values before passing them between modules',
+      'Outputs are the only mechanism a module or an independently-deployed unit has for handing a computed value back to whoever consumes it',
+      'Outputs remove the need for variables entirely once modules are introduced',
+      'Outputs are required before a resource can be created at all',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What is terraform output -json useful for',
+    options: [
+      'It deletes all outputs from the state file',
+      'It renders output values as JSON so a script or CI pipeline can consume them programmatically instead of a human reading plain text',
+      'It marks every output as sensitive automatically',
+      'It is required before terraform apply will succeed',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="variables-and-data-flow/outputs-and-locals" questions={quizOutputsAndLocals} />
+
+<ProgressTracker client:visible id="variables-and-data-flow/outputs-and-locals" />

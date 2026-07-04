@@ -1,0 +1,174 @@
+---
+title: 'Expressions, Functions, and Conditionals'
+description: 'ใช้ built-in function แปลงค่า ใช้ terraform console ทดลอง expression อย่างปลอดภัย ใช้ conditional expression เลือกระหว่างสองค่า และใช้ dynamic block สร้าง nested block จำนวนไม่คงที่ภายใน resource เดียว'
+sidebar:
+  order: 3
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## ไอเดียในหนึ่งประโยค
+
+Terraform configuration ไม่ได้มีแค่ค่า static เท่านั้น expression เรียก built-in function ได้ แยกทางด้วย conditional ได้ และสร้าง nested block จำนวนไม่คงที่ได้ ทั้งหมดนี้ถูก evaluate ก่อนที่จะสร้าง resource ใด ๆ เลยด้วยซ้ำ
+
+## Built-in function และ terraform console สำหรับเช็คมัน
+
+Terraform มี standard library ของ built-in function ให้มาเยอะมาก และไม่มีทางประกาศ function เองได้ ควรจำเป็นหมวดมากกว่าจำทีละตัว string function อย่าง `join`, `split`, `format` ไว้จัดรูปแบบ text collection function อย่าง `lookup`, `merge`, `contains` ทำงานกับ list, map, set numeric function จัดการเรื่องคำนวณกับปัดเศษ และมี function เฉพาะทาง networking ชุดหนึ่ง ที่สำคัญที่สุดคือ `cidrsubnet` เพราะการหั่น IP address range ด้วยมือคือการคำนวณซ้ำ ๆ ที่ผิดพลาดง่าย งานแบบนี้ควรให้ function ทำแทน
+
+```hcl
+locals {
+  # string functions
+  bucket_name = join("-", [var.project, var.environment, "logs"])
+  az_list     = split(",", "us-east-1a,us-east-1b,us-east-1c")
+  label       = format("%s-%03d", var.project, var.build_number)
+
+  # collection functions
+  instance_type = lookup(var.instance_type_overrides, var.environment, "t3.micro")
+  full_tags     = merge(var.default_tags, var.extra_tags)
+  is_prod_like  = contains(["prod", "staging"], var.environment)
+}
+
+resource "aws_subnet" "app" {
+  count = 3
+
+  vpc_id     = aws_vpc.main.id
+  cidr_block = cidrsubnet(aws_vpc.main.cidr_block, 4, count.index)
+}
+```
+
+`cidrsubnet(prefix, newbits, netnum)` รับ parent CIDR block มา ขยาย prefix length ออกไปอีก `newbits` แล้วเติม bit ใหม่ด้วย `netnum` เพื่อได้ subnet หนึ่งตัว ถ้า VPC เป็น `/16` และ `newbits = 4` แต่ละ call จะได้ `/20` และการส่ง `count.index` เป็น `netnum` จะแจก subnet ที่ต่อเนื่องกันและไม่ทับกันให้อัตโนมัติ ไม่ต้องมานั่งคำนวณ `10.0.16.0/20`, `10.0.32.0/20` ไปเรื่อย ๆ ด้วยมือ และไม่ต้องมานั่งจำว่า range ไหนถูกใช้ไปแล้ว
+
+ก่อนจะเอา function ที่ไม่คุ้นเคยไปใส่ใน resource argument `terraform console` คือวิธีเร็วที่สุดที่จะเช็คว่ามัน return อะไรจริง ๆ มันเปิด interactive REPL ที่ทำงานกับ configuration และ state ปัจจุบัน โดยไม่แตะ infrastructure จริงเลย
+
+```bash
+terraform console
+```
+
+```
+> cidrsubnet("10.0.0.0/16", 4, 2)
+"10.0.32.0/20"
+> join("-", ["payments", "prod", "logs"])
+"payments-prod-logs"
+> lookup({dev = "t3.micro", prod = "m6i.large"}, "staging", "t3.small")
+"t3.small"
+```
+
+ทุกคำตอบด้านบนนี้คือสิ่งที่ปกติแล้วต้องเดา ต้องรัน `plan` เต็ม ๆ เพื่อดู หรือต้องคำนวณเองบนกระดาษ `terraform console` evaluate expression อะไรก็ได้ ไม่ว่าจะเป็นการเรียก function, การอ้างอิง variable หรือ resource attribute, หรือ conditional ทั้งก้อน แล้ว print ผลลัพธ์ออกมาทันที ทำให้มันเป็นจุดแรกที่ควรไปเช็คเวลาพฤติกรรมของ expression ไม่ชัดเจน
+
+## Conditional expression
+
+conditional expression มีสามส่วนตายตัว `condition ? true_val : false_val` Terraform evaluate `condition` ให้เป็น boolean แล้ว return `true_val` ถ้าเป็น `true` หรือ `false_val` ถ้าไม่ใช่ ไม่มีอะไรซับซ้อนไปกว่านี้ แต่พอรวมกับการเรียก function มันกลายเป็นวิธีที่กระชับสำหรับเลือกระหว่างสองค่าที่คำนวณไว้
+
+```hcl
+variable "environment" {
+  type    = string
+  default = "dev"
+}
+
+locals {
+  instance_type = var.environment == "prod" ? "m6i.large" : "t3.micro"
+
+  backup_retention_days = var.environment == "prod" ? 30 : 7
+}
+
+resource "aws_instance" "web" {
+  ami           = var.ami_id
+  instance_type = local.instance_type
+}
+```
+
+`local.instance_type` resolve ออกมาเป็น string ตัวใดตัวหนึ่งจากสองตัวก่อนที่ `aws_instance.web` จะถูก plan ด้วยซ้ำ ไม่มีการแตกทางเหลืออยู่ตอน apply มีแค่ค่าเดียวที่ resolve เสร็จแล้วอยู่ใน `instance_type` นี่คือ pattern ที่ควรใช้เวลาค่าขึ้นอยู่กับเงื่อนไข yes/no ตัวเดียว ส่วนกรณีที่มีผลลัพธ์มากกว่าสองแบบ `lookup` กับ map (แบบด้านบน) หรือ `for` expression มักจะชัดเจนกว่าการซ้อน conditional เข้าไปในกันเอง
+
+## Dynamic block: nested block จำนวนไม่คงที่
+
+`count` กับ `for_each` บน resource ที่จะพูดถึงในบทถัดไป สร้าง resource ทั้งตัวจำนวนไม่คงที่ `dynamic` block แก้ปัญหาคนละแบบที่แคบกว่านั้น มันสร้าง nested block ที่ซ้ำกันจำนวนไม่คงที่ *ภายใน* resource เดียว เวลาที่จำนวน nested block เหล่านั้นขึ้นอยู่กับ collection ที่ขนาดยังไม่รู้จนกว่า configuration จะรัน
+
+```hcl
+variable "allowed_ports" {
+  type        = list(number)
+  description = "TCP ports allowed inbound on the security group"
+  default     = [22, 443, 8080]
+}
+
+resource "aws_security_group" "app" {
+  name   = "app-sg"
+  vpc_id = aws_vpc.main.id
+
+  dynamic "ingress" {
+    for_each = var.allowed_ports
+
+    content {
+      from_port   = ingress.value
+      to_port     = ingress.value
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]
+    }
+  }
+}
+```
+
+มี `aws_security_group.app` resource เดียวเป๊ะ ๆ แต่ `dynamic "ingress"` block ขยายออกเป็น `ingress { ... }` block หนึ่งอันต่อหนึ่ง entry ใน `var.allowed_ports` — ใส่ port เข้าไปสามตัว ได้ `ingress` block สามอันออกมา ถ้า `var.allowed_ports` ว่างเปล่า `dynamic` block ก็ไม่สร้าง `ingress` block เลยสักอัน ภายใน `content` นั้น `ingress.value` อ้างถึง element ตัวปัจจุบัน บทบาทเดียวกับที่ `each.value` เล่นให้กับ `for_each` ระดับ resource ให้ใช้ `dynamic` เฉพาะตอนที่สิ่งที่ซ้ำกันอยู่ *ภายใน* resource อย่าง `ingress` ใน `aws_security_group` ส่วนใช้ `count` หรือ `for_each` บนตัว resource เองเวลาสิ่งที่ซ้ำกันคือ resource ทั้งตัว
+
+<Mermaid title="A conditional and a function call resolve to one value before a resource is planned" code={conditionalFunctionDiagram} />
+
+export const conditionalFunctionDiagram = `flowchart LR
+  e["var.environment"] --> c{"environment == prod ?"}
+  c -->|true| a["m6i.large"]
+  c -->|false| b["t3.micro"]
+  a --> r["local.instance_type"]
+  b --> r
+  r --> res["aws_instance.web"]`;
+
+<Callout title="The one-line takeaway">
+Terraform มี **function** library ในตัวครอบคลุมทั้ง string, collection, numeric และ networking อย่าง `join`, `merge`, `cidrsubnet` และ **`terraform console`** ให้ evaluate expression อะไรก็ได้แบบ interactive กับ state จริงก่อนจะใส่ลงไปใน resource argument **conditional expression** — `condition ? true_val : false_val` — resolve ออกมาเป็นค่าใดค่าหนึ่งจากสองค่าก่อนที่ resource จะถูก plan ด้วยซ้ำ **`dynamic`** block สร้าง nested block ที่ซ้ำกันจำนวนไม่คงที่ *ภายใน* resource เดียวจาก collection ซึ่งเป็นคนละปัญหากับการสร้าง resource ทั้งตัวจำนวนไม่คงที่ด้วย **`count`** หรือ **`for_each`** ที่จะพูดถึงในบทถัดไป
+</Callout>
+
+export const quizExpressionsFunctions = [
+  {
+    q: 'terraform console ใช้ทำอะไรเป็นหลัก',
+    options: [
+      'apply infrastructure ให้เร็วกว่า terraform apply',
+      'evaluate expression และ function แบบ interactive กับ configuration และ state ปัจจุบัน โดยไม่แตะ infrastructure จริง',
+      'สร้าง diagram แบบกราฟิกของ resource dependency graph',
+      'format ไฟล์ HCL ให้เป็น style มาตรฐาน',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'conditional expression มีสามส่วนอะไรบ้าง',
+    options: [
+      'variable, function, resource',
+      'condition, true_val, false_val เขียนเป็น condition ? true_val : false_val',
+      'for, in และ collection',
+      'count, index และ resource label',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'ควรใช้ dynamic block แทน count หรือ for_each บน resource เมื่อไหร่',
+    options: [
+      'เมื่อต้องการสร้าง resource ทั้งตัวจำนวนไม่คงที่',
+      'เมื่อต้องสร้าง nested block ที่ซ้ำกันจำนวนไม่คงที่ภายใน resource เดียว เช่น ingress block หลายอันใน aws_security_group เดียว',
+      'dynamic block กับ count ใช้แทนกันได้เสมอ',
+      'เมื่อต้อง mark ค่าให้เป็น sensitive',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'cidrsubnet(prefix, newbits, netnum) ทำอะไร',
+    options: [
+      'รวม CIDR block สองอันเข้าเป็นอันใหญ่อันเดียว',
+      'ขยาย parent CIDR prefix ออกไปอีก newbits bit แล้วเติม bit ใหม่ด้วย netnum เพื่อได้ subnet address หนึ่งตัว',
+      'ตรวจว่า CIDR block ทับกับ VPC ที่มีอยู่แล้วหรือไม่',
+      'แปลง CIDR block ให้เป็น list ของ IP address แต่ละตัว',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="variables-and-data-flow/expressions-functions-and-conditionals" questions={quizExpressionsFunctions} />
+
+<ProgressTracker client:visible id="variables-and-data-flow/expressions-functions-and-conditionals" />

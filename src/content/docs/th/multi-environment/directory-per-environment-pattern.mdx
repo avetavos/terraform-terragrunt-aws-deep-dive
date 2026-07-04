@@ -1,0 +1,155 @@
+---
+title: 'Directory-per-Environment Pattern'
+description: 'ให้แต่ละ environment มี backend และ directory ของตัวเอง แต่ยังแชร์ Terraform module เดียวกัน และการ duplicate ที่ pattern นี้พาเอากลับมาใหม่'
+sidebar:
+  order: 3
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## ไอเดียในหนึ่งประโยค
+
+directory-per-environment ให้แต่ละ environment มี directory ที่แยกจากกันจริง ๆ พร้อม backend configuration ของตัวเอง ในขณะที่ root config ของทุก environment เรียก shared module เดียวกัน ด้วยค่า input ที่ต่างกัน
+
+## directory จริง, backend จริง, ต่อ environment
+
+แทนที่จะเป็น state file เดียวที่เลือกด้วย workspace pattern นี้ใช้ directory จริงหนึ่งชุดต่อ environment แต่ละชุดมีไฟล์ `.tf` ระดับ root ของตัวเอง
+
+```bash
+environments/
+├── dev/
+│   └── main.tf
+├── staging/
+│   └── main.tf
+└── prod/
+    └── main.tf
+modules/
+└── app/
+    └── main.tf
+```
+
+ความต่างสำคัญจากการ copy-paste environment ทั้งชุดคือสิ่งที่อยู่ข้างใน `main.tf` แต่ละไฟล์ ไม่ใช่ copy เต็มของ resource ของ application แต่เป็น root configuration เล็ก ๆ ที่มี `backend` block ของตัวเอง กับ `module` call เดียวเข้าไปยัง shared module ตัวเดียว
+
+```hcl
+# environments/dev/main.tf
+terraform {
+  backend "s3" {
+    bucket       = "acme-terraform-state-dev"
+    key          = "app/terraform.tfstate"
+    region       = "us-east-1"
+    use_lockfile = true
+  }
+}
+
+provider "aws" {
+  region  = "us-east-1"
+  profile = "acme-dev"
+}
+
+module "app" {
+  source = "../../modules/app"
+
+  environment    = "dev"
+  instance_type  = "t3.micro"
+  instance_count = 1
+}
+```
+
+```hcl
+# environments/prod/main.tf
+terraform {
+  backend "s3" {
+    bucket       = "acme-terraform-state-prod"
+    key          = "app/terraform.tfstate"
+    region       = "us-east-1"
+    use_lockfile = true
+  }
+}
+
+provider "aws" {
+  region  = "us-east-1"
+  profile = "acme-prod"
+}
+
+module "app" {
+  source = "../../modules/app"
+
+  environment    = "prod"
+  instance_type  = "m5.large"
+  instance_count = 3
+}
+```
+
+สังเกตว่า backend แต่ละอันชี้ไปยัง S3 bucket ที่แยกกันจริง ผูกกับ `profile` แยก (และในของจริง มักเป็น AWS account ที่แยกกันจริง ๆ ด้วย) `dev` กับ `prod` แชร์ state กันโดยไม่ตั้งใจไม่ได้ เพราะไม่มี state ร่วมกันให้ไปแตะโดยพลาด resource จริงของ application อยู่ที่เดียวคือใน `modules/app` และทุก environment แค่เรียก module นั้นด้วยค่า `instance_type` กับ `instance_count` ที่ต่างกัน
+
+## สิ่งที่ pattern นี้แก้ได้จริง
+
+ตรงนี้แก้ปัญหา isolation ที่อ่อนแอของ workspace ได้ตรง ๆ แต่ละ environment directory ชี้ไปยัง AWS account ของตัวเอง, region ของตัวเอง, และ backend bucket ของตัวเองได้ โดยไม่มีอะไรผูกมัดกันในระดับ Terraform เลย ไม่มี state file ร่วมให้ชื่อ workspace ที่พิมพ์ผิดไปแตะโดยพลาด และไม่มี provider block ร่วมให้ credential ผิดหลุดเข้าไปได้ ถ้า `dev` กับ `prod` ต้องอยู่คนละ AWS account จริง ๆ เพื่อ blast-radius isolation pattern นี้ทำได้ ในขณะที่ workspace ทำไม่ได้
+
+## ปัญหา DRY ที่ pattern นี้พาเอากลับมา
+
+ลองดูสองไฟล์ `main.tf` นั้นอีกครั้ง input `instance_type`, `instance_count`, และ `environment` เป็นบรรทัดเดียวที่ต่างกันอย่างมีความหมายระหว่างสองไฟล์นี้ คือสามบรรทัดจากทั้งหมดประมาณสิบห้าบรรทัด ที่เหลือทั้งหมด ทั้งรูปของ `backend "s3"` block, `provider "aws"` block, และ argument `source` ของ `module "app"` block คือ boilerplate ที่ซ้ำกันแทบทุกตัวอักษรในทุก environment directory bump module ไปเวอร์ชันใหม่, เพิ่ม provider argument ที่จำเป็นตัวใหม่, หรือเปลี่ยน convention ของ state key แล้วความเปลี่ยนแปลงนั้นต้องเอาไปใส่มือใน `dev/main.tf`, `staging/main.tf`, และ `prod/main.tf` ทีละไฟล์ เป็น failure mode แบบเดียวกับการทำซ้ำมือจากวิธี copy-paste directory ทั้งชุด เพียงแต่แคบลงเหลือแค่ส่วนหนึ่งของแต่ละไฟล์ที่เล็กกว่าเดิม แต่ก็ยังเป็นปัญหาจริง
+
+<Mermaid title="Three isolated environment directories, one shared module, but near-identical boilerplate repeated in every directory" code={dirPerEnvDiagram} />
+
+export const dirPerEnvDiagram = `flowchart LR
+  mod["modules/app (shared source)"]
+  devEnv["environments/dev/main.tf"] -->|module call with dev inputs| mod
+  stagingEnv["environments/staging/main.tf"] -->|module call with staging inputs| mod
+  prodEnv["environments/prod/main.tf"] -->|module call with prod inputs| mod
+  devEnv -.->|near-identical backend + provider + source blocks| stagingEnv
+  stagingEnv -.->|near-identical backend + provider + source blocks| prodEnv`;
+
+<Callout title="สรุปหนึ่งบรรทัด">
+directory-per-environment ให้แต่ละ environment มี directory จริงที่แยกกัน พร้อม **backend** และ **provider** configuration ของตัวเอง แม้แต่ AWS account ที่แยกกันก็ทำได้ ในขณะที่ root config ของทุก directory เรียก **shared module** เดียวกันด้วย input ที่ต่างกัน แก้ปัญหา isolation ที่อ่อนแอของ workspace ได้ ข้อแลกเปลี่ยนคือ backend block, provider block, และ argument `source` ของ module จบลงด้วยการซ้ำแทบทุกตัวอักษรในทุก environment directory โดยมีแค่ค่า input ไม่กี่ตัวที่ต่างกันจริง ๆ พาปัญหา DRY เวอร์ชันย่อยกลับมาอีกครั้ง แบบเดียวกับที่ module นี้เริ่มต้นไว้
+</Callout>
+
+export const quizDirPerEnv = [
+  {
+    q: 'directory-per-environment pattern แก้ปัญหาอะไรที่ Terraform workspace แก้ไม่ได้',
+    options: [
+      'มันทำให้ไม่ต้องมี backend configuration เลย',
+      'มันให้แต่ละ environment มี backend, provider configuration ที่แยกกันจริง และอาจมี AWS account แยกกันได้ เพราะ environment ไม่แชร์ backend และโค้ด .tf เดียวกันแบบที่ workspace ทำ',
+      'มันทำให้ terraform apply เร็วขึ้น',
+      'มันสร้างเอกสารให้แต่ละ environment อัตโนมัติ',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'สิ่งไหนยังคง DRY (เขียนครั้งเดียว ใช้ซ้ำได้ทุกที่) ใน directory-per-environment pattern',
+    options: [
+      'backend configuration block',
+      'shared module (เช่น modules/app) ที่ทุก environment directory เรียกด้วยค่า input ต่างกัน แทนที่จะทำ resource ซ้ำ',
+      'provider block',
+      'state file เอง',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'อะไรที่ยังถูก duplicate ข้าม environment directory ใน pattern นี้ ทั้งที่มันแก้ปัญหา isolation ได้แล้ว',
+    options: [
+      'ไม่มีเลย pattern นี้ไม่มีการ duplicate ใด ๆ',
+      'backend block, provider block, และ argument source กับ version ของ module ซึ่งซ้ำกันแทบทุกตัวอักษรในทุก environment directory มีแค่ key กับ input เท่านั้นที่ต่างกัน',
+      'มีแค่โค้ด application ข้างใน modules/app เท่านั้น',
+      'AWS credential ซึ่งถูก copy-paste ระหว่าง environment ตรง ๆ',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'ทำไม environments/dev กับ environments/prod ถึงใช้ AWS account ที่ต่างกันโดยสิ้นเชิงได้อย่างปลอดภัยใน pattern นี้',
+    options: [
+      'เพราะ Terraform ตรวจจับและป้องกันการเข้าถึงข้าม account ให้อัตโนมัติ',
+      'เพราะแต่ละ environment directory มี backend และ provider configuration ที่อิสระจากกัน จึงไม่มี state file หรือ credential ร่วมกันระหว่างสองอัน',
+      'เพราะ AWS account ใช้กับ Terraform workspace ไม่ได้ ใช้ได้แค่กับ directory เท่านั้น',
+      'เพราะ shared module บังคับ account boundary ไว้ข้างในเอง',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="multi-environment/directory-per-environment-pattern" questions={quizDirPerEnv} />
+
+<ProgressTracker client:visible id="multi-environment/directory-per-environment-pattern" />

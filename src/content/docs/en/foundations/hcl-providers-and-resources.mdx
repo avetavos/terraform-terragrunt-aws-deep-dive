@@ -1,0 +1,185 @@
+---
+title: 'HCL, Providers, and Resources'
+description: 'HCL block syntax, the terraform and provider blocks, resource versus data blocks, and how Terraform builds a dependency graph.'
+sidebar:
+  order: 3
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## The idea in one sentence
+
+Every piece of Terraform configuration is a **block** written in HCL — `terraform`, `provider`, `resource`, and `data` are the four you will write constantly, and together they tell Terraform what plugins to load, how to talk to AWS, what to create, and what to read.
+
+## HCL block syntax
+
+HCL (HashiCorp Configuration Language) is built from blocks. The general shape is a block type, zero or more quoted labels, and a body of arguments in braces:
+
+```hcl
+block_type "label1" "label2" {
+  argument = value
+}
+```
+
+A `resource` block, for instance, takes two labels; a `provider` block takes one. Comments use `#` or `//` for a single line, and `/* */` for a multi-line block. Strings support interpolation with `${...}`, though referencing another value directly (`bucket = aws_s3_bucket.reports.id`) does not need the `${}` wrapper — that syntax is only needed inside a larger string.
+
+```hcl
+# A single-line comment.
+// Also a single-line comment.
+
+resource "aws_s3_bucket" "reports" {
+  bucket = "acme-monthly-reports-${var.environment}" # interpolation inside a string
+}
+```
+
+## The `terraform` and `provider` blocks
+
+The `terraform` block configures Terraform itself: which version of Terraform is allowed to run this configuration, and which providers it needs — including where each provider comes from and which versions are acceptable.
+
+```hcl
+terraform {
+  required_version = ">= 1.7.0"
+
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+```
+
+`source` is the provider's registry address (`hashicorp/aws` resolves to the official AWS provider on the Terraform Registry), and `version` is a constraint, not a pin — `~> 5.0` allows any `5.x` release.
+
+The `provider` block then configures one instance of a provider you declared above — for AWS, this is where the region (and, in real projects, things like assumed roles) lives:
+
+```hcl
+provider "aws" {
+  region = "us-east-1"
+}
+```
+
+## `resource` blocks: the two labels that matter
+
+A `resource` block is how you tell Terraform "this thing should exist." It always has two labels:
+
+```hcl
+resource "aws_instance" "web" {
+  ami           = "ami-0c55b159cbfafe1f0"
+  instance_type = "t3.micro"
+}
+```
+
+- The first label, `aws_instance`, is the resource **type** — defined by the provider, and it determines which arguments are valid and which AWS API Terraform calls.
+- The second label, `web`, is a **name** you choose — it only has meaning inside this configuration.
+
+Together they form the resource's **address**, `aws_instance.web`, which is how you reference this resource's attributes anywhere else in your configuration — for example, `aws_instance.web.id` or `aws_instance.web.public_ip`.
+
+## `data` blocks: reading without owning
+
+A `data` block reads information about something that already exists — infrastructure this configuration does not manage and will never create, update, or destroy. It is Terraform's read-only lookup.
+
+```hcl
+data "aws_ami" "latest" {
+  most_recent = true
+  owners      = ["amazon"]
+
+  filter {
+    name   = "name"
+    values = ["al2023-ami-*-x86_64"]
+  }
+}
+
+resource "aws_instance" "web" {
+  ami           = data.aws_ami.latest.id
+  instance_type = "t3.micro"
+}
+```
+
+`data.aws_ami.latest.id` reads exactly like a resource address, with `data.` in front — the type and name labels work the same way, but nothing about a `data` block ever shows up as a create, update, or destroy in a plan. It only ever reads.
+
+## The dependency graph
+
+Terraform does not apply your configuration top to bottom the way it is written. Instead, it builds a **DAG** (directed acyclic graph) of every resource and data source, and uses it to work out the correct order — and which resources are independent enough to be created **in parallel**.
+
+Edges in that graph come from two places:
+
+- **Implicit dependencies** — whenever one resource's argument references another resource's attribute (like `aws_instance.web` referencing `data.aws_ami.latest.id`, or a subnet referencing a VPC's ID), Terraform infers that the referenced resource must exist first.
+- **Explicit dependencies** — `depends_on` on a resource, used when one resource genuinely depends on another but that relationship is not visible through any attribute reference (for example, an IAM policy that must exist before an application starts relying on it, with no direct argument linking the two).
+
+```hcl
+resource "aws_vpc" "main" {
+  cidr_block = "10.0.0.0/16"
+}
+
+resource "aws_subnet" "app" {
+  vpc_id     = aws_vpc.main.id # implicit dependency on aws_vpc.main
+  cidr_block = "10.0.1.0/24"
+}
+
+resource "aws_instance" "web" {
+  subnet_id     = aws_subnet.app.id # implicit dependency on aws_subnet.app
+  ami           = data.aws_ami.latest.id
+  instance_type = "t3.micro"
+}
+```
+
+<Mermaid title="Terraform builds a DAG from references, applying independent branches in parallel" code={dagDiagram} />
+
+export const dagDiagram = `flowchart LR
+  vpc["aws_vpc.main"] --> subnet["aws_subnet.app"] --> instance["aws_instance.web"]
+  bucket["aws_s3_bucket.logs (unrelated, applies in parallel)"]`;
+
+<Callout title="The one-line takeaway">
+HCL configuration is made of **blocks**: `terraform` declares required providers and versions, `provider` configures how Terraform talks to AWS, `resource` blocks (identified by a **type** and a chosen **name**, together forming an **address**) declare things Terraform should create and manage, and `data` blocks only **read** existing infrastructure without owning it; Terraform builds a **dependency graph (DAG)** from implicit references and explicit `depends_on`, applying independent resources in parallel.
+</Callout>
+
+export const quizHcl = [
+  {
+    q: 'In `resource "aws_instance" "web" { ... }`, what do the two labels represent',
+    options: [
+      'Both labels are arbitrary names with no special meaning',
+      'The first label is the resource type (defined by the provider); the second is a name you choose, and together they form the resource address',
+      'The first label is the AWS region, the second is the availability zone',
+      'The first label is the provider name, the second is the resource type',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What is the key difference between a resource block and a data block',
+    options: [
+      'A data block is just a resource block with a different name',
+      'A resource block declares something Terraform creates and manages; a data block only reads information about existing infrastructure without creating, updating, or destroying it',
+      'Data blocks can only be used with the AWS provider',
+      'Resource blocks cannot be referenced elsewhere in the configuration',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'How does Terraform decide the order in which to create resources',
+    options: [
+      'Strictly top to bottom, in the order they appear in the file',
+      'Alphabetically by resource name',
+      'It builds a dependency graph (DAG) from implicit attribute references and explicit depends_on, then orders and parallelizes accordingly',
+      'It always creates every resource at exactly the same time',
+    ],
+    answer: 2,
+  },
+  {
+    q: 'Which correctly describes the terraform block required_providers argument',
+    options: [
+      'It sets the AWS region for all resources',
+      'It specifies each provider needed, including its registry source and an acceptable version constraint',
+      'It lists every resource type used in the configuration',
+      'It is only needed when using data blocks',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="foundations/hcl-providers-and-resources" questions={quizHcl} />
+
+<ProgressTracker client:visible id="foundations/hcl-providers-and-resources" />
