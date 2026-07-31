@@ -10,9 +10,9 @@ import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
-## The idea in one sentence
+## ไอเดียในหนึ่งประโยค
 
-`source` argument บน `module` block บอก Terraform ว่าจะไปเอา code ของ module นั้นมาจากไหน และ infrastructure จริงที่ไม่เล็กจะถูกสร้างขึ้นด้วยการเอา module เล็ก ๆ หลายตัวมาประกอบกัน — output ของ module หนึ่งถูกส่งตรงเข้าไปเป็น input variable ของอีก module หนึ่ง
+`source` argument บน `module` block บอก Terraform ว่าจะไปเอา code ของ module นั้นมาจากไหน และ infrastructure จริงที่ไม่เล็กเกิดจากการเอา module เล็ก ๆ หลายตัวมาประกอบกัน — output ของ module หนึ่งถูกส่งตรงเข้าไปเป็น input variable ของอีก module หนึ่ง
 
 ## source มาจากไหนบ้าง
 
@@ -55,7 +55,7 @@ output "private_subnet_ids" {
 }
 ```
 
-`ec2-instance` module ประกาศ input ที่มันต้องการเพื่อ launch เข้าไปใน network นั้น
+`ec2-instance` module ประกาศ input ที่ต้องการเพื่อ launch เข้าไปใน network นั้น
 
 ```hcl
 # modules/ec2-instance/variables.tf
@@ -87,7 +87,7 @@ module "web_server" {
 }
 ```
 
-ทั้งสอง module ไม่จำเป็นต้องรู้จักกันเลย `vpc` module ไม่รู้ด้วยซ้ำว่าจะมี `ec2-instance` module มา consume output ของมันในอนาคต และ `ec2-instance` module ก็ไม่รู้ว่า `vpc_id` ที่ได้รับมาจาก module หรือแค่ string ที่ hardcode ไว้ root configuration เป็นจุดเดียวที่รู้จักทั้งสอง module และเป็นคนเชื่อมมันเข้าด้วยกัน
+ทั้งสอง module ไม่จำเป็นต้องรู้จักกันเลย `vpc` module ไม่รู้ด้วยซ้ำว่าจะมี `ec2-instance` module มา consume output ของตัวเองในอนาคต และ `ec2-instance` module ก็ไม่รู้ว่า `vpc_id` ที่ได้รับมาจาก module หรือแค่ string ที่ hardcode ไว้ root configuration เป็นจุดเดียวที่รู้จักทั้งสอง module และเป็นคนเชื่อมทั้งสองเข้าด้วยกัน
 
 ## public Terraform Registry คือตัวเร่ง productivity ตัวจริง
 
@@ -107,7 +107,7 @@ module "vpc" {
 }
 ```
 
-อย่างไรก็ตาม "ใช้กันแพร่หลาย" ไม่เหมือนกับ "เชื่อได้แบบไม่ต้องตรวจ" ก่อนสร้าง production infrastructure บน Registry module ตัวไหน ควรอ่านให้แน่ใจว่ามัน create อะไรจริง ๆ บ้าง — resource ของมัน, ค่า default ของมัน และ IAM permission ที่มันสร้างในนามคุณ Registry module ก็ยังเป็น code ของคนอื่นที่รันด้วย AWS credential ของคุณอยู่ดี
+อย่างไรก็ตาม "ใช้กันแพร่หลาย" ไม่เหมือนกับ "เชื่อได้แบบไม่ต้องตรวจ" ก่อนสร้าง production infrastructure บน Registry module ตัวไหน ควรอ่านให้แน่ใจว่า module นั้น create อะไรจริง ๆ บ้าง — resource, ค่า default และ IAM permission ที่สร้างในนามคุณ Registry module ก็ยังเป็น code ของคนอื่นที่รันด้วย AWS credential ของคุณอยู่ดี
 
 <Mermaid title="A vpc module's outputs feeding an ec2-instance module's inputs from the root configuration" code={moduleCompositionDiagram} />
 
@@ -132,7 +132,7 @@ export const moduleCompositionDiagram = `flowchart LR
   ec2in2 --> ec2mod`;
 
 <Callout title="The one-line takeaway">
-`source` argument บอก Terraform ว่า code ของ module อยู่ที่ไหน — **local relative path**, public **Terraform Registry** หรือ **Git URL** ที่มี `?ref=` เพื่อ pin version ก็ได้ — และ infrastructure จริงถูกสร้างด้วยการ **compose** module เล็ก ๆ ที่ focus งานเดียวเข้าด้วยกัน โดยส่ง `output` ของ module หนึ่งตรงเข้าไปเป็น input variable ของอีก module หนึ่งภายใน root configuration ที่เป็นคนต่อมันเข้าด้วยกัน community module ที่ดูแลดีบน public Registry อย่าง `terraform-aws-modules/vpc/aws` มักเป็นจุดเริ่มต้นที่ดีกว่าการเขียน pattern ทั่วไปขึ้นมาเองตั้งแต่ศูนย์ แต่ก็ยังควรอ่านให้แน่ใจว่า Registry module นั้น create อะไรจริง ๆ ก่อนเชื่อมันใน production
+`source` argument บอก Terraform ว่า code ของ module อยู่ที่ไหน — **local relative path**, public **Terraform Registry** หรือ **Git URL** ที่มี `?ref=` เพื่อ pin version ก็ได้ — และ infrastructure จริงถูกสร้างด้วยการ **compose** module เล็ก ๆ ที่ focus งานเดียวเข้าด้วยกัน โดยส่ง `output` ของ module หนึ่งตรงเข้าไปเป็น input variable ของอีก module หนึ่งภายใน root configuration ที่เป็นคนต่อเข้าด้วยกัน community module ที่ดูแลดีบน public Registry อย่าง `terraform-aws-modules/vpc/aws` มักเป็นจุดเริ่มต้นที่ดีกว่าการเขียน pattern ทั่วไปขึ้นมาเองตั้งแต่ศูนย์ แต่ก็ยังควรอ่านให้แน่ใจว่า Registry module นั้น create อะไรจริง ๆ ก่อนเชื่อใน production
 </Callout>
 
 export const quizModuleComposition = [
@@ -157,11 +157,11 @@ export const quizModuleComposition = [
     answer: 1,
   },
   {
-    q: 'vpc module ในตัวอย่างต้องรู้หรือไม่ว่ามี ec2-instance module มา consume output ของมัน',
+    q: 'vpc module ในตัวอย่างต้องรู้หรือไม่ว่ามี ec2-instance module มา consume output ของตัวเอง',
     options: [
       'ต้องรู้ vpc module ต้อง import ec2-instance module เพื่อ expose output ให้เข้ากันได้',
-      'ไม่ต้องรู้ vpc module แค่ expose output ของมันออกไป ส่วน root configuration เป็นจุดเดียวที่เชื่อมทั้งสอง module เข้าด้วยกัน',
-      'ต้องรู้ Terraform บังคับให้ module ต้องประกาศว่า module ไหนจะมา consume output ของมันได้',
+      'ไม่ต้องรู้ vpc module แค่ expose output ของตัวเองออกไป ส่วน root configuration เป็นจุดเดียวที่เชื่อมทั้งสอง module เข้าด้วยกัน',
+      'ต้องรู้ Terraform บังคับให้ module ต้องประกาศว่า module ไหนจะมา consume output ของตัวเองได้',
       'ไม่ต้องรู้ เพราะ module composition ทำงานได้ก็ต่อเมื่อทั้งสอง module มาจาก source เดียวกัน',
     ],
     answer: 1,
@@ -171,7 +171,7 @@ export const quizModuleComposition = [
     options: [
       'ไม่ควรเลย module ที่เขียนเองปลอดภัยกว่า Registry module เสมอ',
       'ควรเสมอ Registry module ไม่ต้อง review ก่อนใช้',
-      'สำหรับ pattern ทั่วไปที่ถูกแก้ปัญหามาแล้ว เช่น VPC layout มาตรฐาน แต่ก็ยังควรอ่านให้แน่ใจว่า module นั้น create อะไรก่อนเชื่อมันใน production',
+      'สำหรับ pattern ทั่วไปที่ถูกแก้ปัญหามาแล้ว เช่น VPC layout มาตรฐาน แต่ก็ยังควรอ่านให้แน่ใจว่า module นั้น create อะไรก่อนเชื่อใน production',
       'เฉพาะตอนที่ module source เป็น local relative path เท่านั้น',
     ],
     answer: 2,

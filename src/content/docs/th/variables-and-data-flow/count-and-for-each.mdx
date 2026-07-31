@@ -40,7 +40,7 @@ resource "aws_instance" "web" {
 
 ## จุดอ่อนจริงของ count: ลบ item กลาง list
 
-ปัญหาเกิดขึ้นเฉพาะตอนที่ลบ item ออกจากกลาง `var.instance_names` สมมติลบ `"secondary"` ออก เหลือ `["primary", "worker"]` ในทางความคิด ควรมีแค่เรื่องเดียวเกิดขึ้น คือทำลาย instance ที่ tag เป็น `"secondary"` แต่ Terraform ไม่ได้ track "instance ที่ tag เป็น secondary" มัน track index `0`, index `1`, index `2` พอ list สั้นลง index `1` ตอนนี้กลายเป็นอ้างถึง `"worker"` แทน `"secondary"` และ index `2` ก็ไม่มีอยู่แล้วเลย plan ของ Terraform สะท้อน index ไม่ใช่ intent:
+ปัญหาเกิดขึ้นเฉพาะตอนที่ลบ item ออกจากกลาง `var.instance_names` สมมติลบ `"secondary"` ออก เหลือ `["primary", "worker"]` ในทางความคิด ควรมีแค่เรื่องเดียวเกิดขึ้น คือทำลาย instance ที่ tag เป็น `"secondary"` แต่ Terraform ไม่ได้ track "instance ที่ tag เป็น secondary" แต่ track index `0`, index `1`, index `2` พอ list สั้นลง index `1` ตอนนี้กลายเป็นอ้างถึง `"worker"` แทน `"secondary"` และ index `2` ก็ไม่มีอยู่แล้วเลย plan ของ Terraform สะท้อน index ไม่ใช่ intent:
 
 - `aws_instance.web[1]` ถูกทำลาย (เดิมคือ `"secondary"`) แล้วสร้างใหม่ด้วยค่าใหม่ที่ index นั้น (`"worker"`)
 - `aws_instance.web[2]` (`"worker"` ตัวเดิม) ถูกทำลาย โดยไม่มีอะไรมาแทนที่
@@ -69,11 +69,11 @@ resource "aws_instance" "web" {
 }
 ```
 
-ทีนี้ลบ `"secondary"` ออกจาก set มีแค่ `aws_instance.web["secondary"]` เท่านั้นที่ถูก plan ให้ทำลาย `aws_instance.web["primary"]` กับ `aws_instance.web["worker"]` ไม่ถูกแตะเลย เพราะ key ของมันไม่เคยขยับ Terraform เลยไม่มีเหตุผลต้องไปยุ่งกับมัน นี่คือเหตุผลที่ `for_each` เป็นตัวเลือก default ที่ดีกว่าสำหรับเกือบทุกกรณี ยกเว้นกรณีง่ายที่สุดที่ count คงที่และลำดับกับ identity ไม่สำคัญจริง ๆ มันทำให้ "ลบหนึ่งอย่าง" แปลว่า "ทำลายหนึ่งอย่าง" พอดี โดยที่อย่างอื่นไม่ถูกแตะเลย
+ทีนี้ลบ `"secondary"` ออกจาก set มีแค่ `aws_instance.web["secondary"]` เท่านั้นที่ถูก plan ให้ทำลาย `aws_instance.web["primary"]` กับ `aws_instance.web["worker"]` ไม่ถูกแตะเลย เพราะ key ของแต่ละตัวไม่เคยขยับ Terraform เลยไม่มีเหตุผลต้องไปยุ่ง นี่คือเหตุผลที่ `for_each` เป็นตัวเลือก default ที่ดีกว่าสำหรับเกือบทุกกรณี ยกเว้นกรณีง่ายที่สุดที่ count คงที่และลำดับกับ identity ไม่สำคัญจริง ๆ เพราะทำให้ "ลบหนึ่งอย่าง" แปลว่า "ทำลายหนึ่งอย่าง" พอดี โดยที่อย่างอื่นไม่ถูกแตะเลย
 
 ## for expression: แปลง collection ไม่ใช่ทำซ้ำ resource
 
-`for` expression เป็นคนละแนวคิดที่บังเอิญมีชื่อคล้ายกับ `for_each` มันเป็น comprehension ทั่วไปสำหรับแปลง collection หนึ่งไปเป็นอีก collection หนึ่ง และไม่เกี่ยวอะไรกับการสร้าง resource หลายตัวด้วยตัวมันเอง
+`for` expression เป็นคนละแนวคิดที่บังเอิญมีชื่อคล้ายกับ `for_each` เป็น comprehension ทั่วไปสำหรับแปลง collection หนึ่งไปเป็นอีก collection หนึ่ง และไม่เกี่ยวอะไรกับการสร้าง resource หลายตัวเลย
 
 ```hcl
 locals {
@@ -83,7 +83,7 @@ locals {
 }
 ```
 
-`[for name in var.instance_names : upper(name)]` รับ list มาแล้วผลิต list ใหม่ หนึ่ง element ที่แปลงแล้วต่อหนึ่ง element ที่รับเข้ามา `{for k, v in aws_instance.web : k => v.id}` รับ map ของ resource instance ที่ `for_each` สร้างไว้ มาผลิตเป็น plain map จากชื่อไปเป็น instance ID ทั้งสองบรรทัดนี้ไม่ได้สร้างหรือทำลาย resource สักตัวเดียว มันเป็น data transformation ล้วน ๆ ที่เอาไปใช้ใน `local`, `output` หรือ default ของ variable ได้ คำว่า "for" ที่ซ้ำกันทำให้คนใหม่ ๆ สับสนบ่อยมาก **`for_each`** meta-argument ทำซ้ำ resource block หนึ่งครั้งต่อหนึ่ง element ของ collection ในขณะที่ **`for` expression** แปลง content ของ collection ให้เป็น collection ใหม่ ทั้งสองคือ feature คนละตัวที่บังเอิญสะกดคล้ายกันเท่านั้น
+`[for name in var.instance_names : upper(name)]` รับ list มาแล้วผลิต list ใหม่ หนึ่ง element ที่แปลงแล้วต่อหนึ่ง element ที่รับเข้ามา `{for k, v in aws_instance.web : k => v.id}` รับ map ของ resource instance ที่ `for_each` สร้างไว้ มาผลิตเป็น plain map จากชื่อไปเป็น instance ID ทั้งสองบรรทัดนี้ไม่ได้สร้างหรือทำลาย resource สักตัวเดียว เป็น data transformation ล้วน ๆ ที่เอาไปใช้ใน `local`, `output` หรือ default ของ variable ได้ คำว่า "for" ที่ซ้ำกันทำให้คนใหม่ ๆ สับสนบ่อยมาก **`for_each`** meta-argument ทำซ้ำ resource block หนึ่งครั้งต่อหนึ่ง element ของ collection ส่วน **`for` expression** แปลง content ของ collection ให้เป็น collection ใหม่ ทั้งสองคือ feature คนละตัวที่บังเอิญสะกดคล้ายกันเท่านั้น
 
 <Mermaid title="Removing a middle item shifts every count index, but only removes one for_each key" code={countForEachDiagram} />
 
@@ -99,7 +99,7 @@ export const countForEachDiagram = `flowchart TB
   end`;
 
 <Callout title="The one-line takeaway">
-**`count`** สร้าง resource N copy โดย index ตั้งแต่ `0` ถึง `N - 1` อ้างอิงแบบ positional เช่น `aws_instance.web[1]` — การลบ item ออกจากกลาง list ทำให้ index ทุกตัวหลังจากนั้นขยับลงหนึ่ง ซึ่ง Terraform อ่านเป็น cascade ของ destroy-and-recreate แทนที่จะเป็นการลบสะอาด ๆ ครั้งเดียว **`for_each`** สร้าง instance หนึ่งตัวต่อหนึ่ง key ใน map หรือ set ของ string อ้างอิงด้วย stable key เช่น `aws_instance.web["worker"]` การลบ key เดียวเลยทำลายแค่ resource ตัวนั้น instance อื่นทั้งหมดไม่ถูกแตะเลย ทำให้มันเป็น default ที่ปลอดภัยกว่าเวลาที่ลำดับกับ fixed count ไม่ใช่ requirement ที่เข้มงวด **`for` expression** อย่าง `[for x in var.list : upper(x)]` เป็นคนละแนวคิดกันแม้ชื่อจะคล้ายกัน มันแปลง collection หนึ่งไปเป็นอีก collection และไม่สร้างหรือทำลาย resource ด้วยตัวมันเองเลย
+**`count`** สร้าง resource N copy โดย index ตั้งแต่ `0` ถึง `N - 1` อ้างอิงแบบ positional เช่น `aws_instance.web[1]` — การลบ item ออกจากกลาง list ทำให้ index ทุกตัวหลังจากนั้นขยับลงหนึ่ง ซึ่ง Terraform อ่านเป็น cascade ของ destroy-and-recreate แทนที่จะเป็นการลบสะอาด ๆ ครั้งเดียว **`for_each`** สร้าง instance หนึ่งตัวต่อหนึ่ง key ใน map หรือ set ของ string อ้างอิงด้วย stable key เช่น `aws_instance.web["worker"]` การลบ key เดียวเลยทำลายแค่ resource ตัวนั้น instance อื่นทั้งหมดไม่ถูกแตะเลย ทำให้เป็น default ที่ปลอดภัยกว่าเวลาที่ลำดับกับ fixed count ไม่ใช่ requirement ที่เข้มงวด **`for` expression** อย่าง `[for x in var.list : upper(x)]` เป็นคนละแนวคิดกันแม้ชื่อจะคล้ายกัน เพราะแปลง collection หนึ่งไปเป็นอีก collection และไม่สร้างหรือทำลาย resource เองเลย
 </Callout>
 
 export const quizCountForEach = [
@@ -138,7 +138,7 @@ export const quizCountForEach = [
     options: [
       'count เพราะง่ายกว่าสำหรับจำนวนคงที่น้อย ๆ เมื่อ identity ไม่สำคัญจริง ๆ',
       'for_each เสมอ ไม่มีข้อยกเว้น',
-      'for expression เพราะมันทำซ้ำ resource ได้',
+      'for expression เพราะทำซ้ำ resource ได้',
       'ไม่เลือกอันไหนเลย เพราะ resource ทำซ้ำไม่ได้ถ้าไม่มี module',
     ],
     answer: 0,

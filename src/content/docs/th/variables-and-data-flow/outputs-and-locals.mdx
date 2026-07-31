@@ -16,7 +16,7 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 ## Locals: คำนวณค่าครั้งเดียวแล้วใช้ซ้ำ
 
-`variable` ถูกตั้งค่าโดยคนที่เรียกใช้ configuration และ `output` ถูกเปิดเผยให้คนที่นำไปใช้ต่อ ส่วน `local` ไม่ใช่ทั้งสองอย่าง มันเป็นความสะดวกภายใน เป็นชื่อที่ตั้งให้กับ expression เพื่อไม่ต้องเขียน expression เดิมซ้ำทุกครั้งที่ต้องใช้ผลลัพธ์ของมัน ไม่มีใครนอก configuration ตั้งค่า `local` ได้ และไม่มีใครนอก configuration อ่านค่ามันได้โดยตรงเช่นกัน
+`variable` ถูกตั้งค่าโดยคนที่เรียกใช้ configuration และ `output` ถูกเปิดเผยให้คนที่นำไปใช้ต่อ ส่วน `local` ไม่ใช่ทั้งสองอย่าง แต่เป็นความสะดวกภายใน เป็นชื่อที่ตั้งให้กับ expression เพื่อไม่ต้องเขียน expression เดิมซ้ำทุกครั้งที่ต้องใช้ผลลัพธ์ ไม่มีใครนอก configuration ตั้งค่า `local` ได้ และไม่มีใครนอก configuration อ่านค่าได้โดยตรงเช่นกัน
 
 ```hcl
 locals {
@@ -47,7 +47,7 @@ resource "aws_s3_bucket" "app_data" {
 }
 ```
 
-`local.common_tags` ถูกคำนวณครั้งเดียวจาก `var.project` กับ `var.environment` แล้วถูกอ้างอิงทั้งจาก `aws_instance.web` และ `aws_s3_bucket.app_data` ถ้าไม่มี local ตัวนี้ expression `merge(...)` เดิมกับคู่ key-value ทั้งสามตัวต้องถูก copy ไปใส่ทุก resource block ที่ต้องใช้ แล้วถ้าวันหนึ่งต้องเปลี่ยน scheme การ tag ก็ต้องไล่หาทุก copy ที่ว่านั้น `local.instance_count` ทำหน้าที่คล้ายกันกับ conditional เล็ก ๆ การตัดสินใจ "5 ตัวใน prod, 2 ตัวที่อื่น" ถูกเขียนไว้ครั้งเดียวแล้วอ้างอิงด้วยชื่อทุกที่ที่ต้องใช้ `local` ไม่มีทางถูก assign โดย caller และไม่ปรากฏใน `terraform plan` ในฐานะสิ่งที่ override ได้ — มันเป็นแค่ชื่อของค่าที่คำนวณไว้ภายใน configuration นี้เท่านั้น
+`local.common_tags` ถูกคำนวณครั้งเดียวจาก `var.project` กับ `var.environment` แล้วถูกอ้างอิงทั้งจาก `aws_instance.web` และ `aws_s3_bucket.app_data` ถ้าไม่มี local ตัวนี้ expression `merge(...)` เดิมกับคู่ key-value ทั้งสามตัวต้องถูก copy ไปใส่ทุก resource block ที่ต้องใช้ แล้วถ้าวันหนึ่งต้องเปลี่ยน scheme การ tag ก็ต้องไล่หาทุก copy ที่ว่านั้น `local.instance_count` ทำหน้าที่คล้ายกันกับ conditional เล็ก ๆ การตัดสินใจ "5 ตัวใน prod, 2 ตัวที่อื่น" ถูกเขียนไว้ครั้งเดียวแล้วอ้างอิงด้วยชื่อทุกที่ที่ต้องใช้ `local` ไม่มีทางถูก assign โดย caller และไม่ปรากฏใน `terraform plan` ในฐานะสิ่งที่ override ได้ — แต่เป็นแค่ชื่อของค่าที่คำนวณไว้ภายใน configuration นี้เท่านั้น
 
 ## Outputs: เปิดเผยค่าหลัง apply
 
@@ -82,11 +82,11 @@ terraform output web_instance_ids
 terraform output -json app_data_bucket_arn
 ```
 
-`terraform output` เฉย ๆ จะ print ทุก output ที่ declare ไว้หลัง `apply` ล่าสุด `terraform output <name>` print เฉพาะตัวเดียว และ `terraform output -json` render ค่า (หรือทุกค่า ถ้าไม่ระบุชื่อ) ออกมาเป็น JSON ซึ่งเหมาะกับตอนที่ CI pipeline หรือ script อื่นต้องเอาผลลัพธ์ไปใช้แบบ programmatic ไม่ใช่ให้คนอ่านเป็น plain text `sensitive = true` บน `db_password` ทำงานเหมือนกับตอนอยู่บน variable เป๊ะ ๆ Terraform จะ print `(sensitive value)` ใน output ของ `plan`/`apply` และใน `terraform output` เฉย ๆ แต่ `terraform output db_password` ยังคง print ค่าจริงออกมาถ้าระบุชื่อตรง ๆ และค่ายังถูกเก็บเป็น plain text ใน state อยู่ดี มันคือการป้องกันตอนแสดงผลบน terminal กับ log ไม่ใช่ access control
+`terraform output` เฉย ๆ จะ print ทุก output ที่ declare ไว้หลัง `apply` ล่าสุด `terraform output <name>` print เฉพาะตัวเดียว และ `terraform output -json` render ค่า (หรือทุกค่า ถ้าไม่ระบุชื่อ) ออกมาเป็น JSON ซึ่งเหมาะกับตอนที่ CI pipeline หรือ script อื่นต้องเอาผลลัพธ์ไปใช้แบบ programmatic ไม่ใช่ให้คนอ่านเป็น plain text `sensitive = true` บน `db_password` ทำงานเหมือนกับตอนอยู่บน variable เป๊ะ ๆ Terraform จะ print `(sensitive value)` ใน output ของ `plan`/`apply` และใน `terraform output` เฉย ๆ แต่ `terraform output db_password` ยังคง print ค่าจริงออกมาถ้าระบุชื่อตรง ๆ และค่ายังถูกเก็บเป็น plain text ใน state อยู่ดี นี่คือการป้องกันตอนแสดงผลบน terminal กับ log ไม่ใช่ access control
 
 ## Outputs คือกลไกของการ compose
 
-ภายใน root configuration เดียว `output` ส่วนใหญ่เป็นแค่ข้อมูลไว้ดู เป็นวิธีสะดวกในการโชว์ค่าให้คนที่รัน `terraform apply` เห็นเฉย ๆ ความสำคัญจริง ๆ ของมันจะเห็นชัดตอนที่ configuration ไม่ได้เป็นก้อนเดียวโดด ๆ อีกต่อไป เวลาแยก infrastructure ออกเป็น module, module ไม่มีทางอื่นเลยที่จะส่งค่าที่คำนวณไว้กลับไปให้คนเรียกมันได้ นอกจากผ่าน `output` block ของตัวเอง — module เรื่อง Modules ในคอร์สนี้จะพูดถึง `module.<name>.<output>` แบบละเอียดทีหลัง เวลาแยก infrastructure ออกเป็น Terragrunt unit ที่ deploy แยกกันแทน `dependency` block จะอ่าน output ของ unit อื่นเพื่อเชื่อม unit เข้าด้วยกันโดยไม่ต้อง hard-code ค่าใด ๆ ระหว่างกันเลย — pattern นี้จะมี module Terragrunt แยกไว้พูดถึงทีหลัง ทั้งสองกรณีใช้กลไกเดียวกันกับที่เห็นตรงนี้ ค่าถูกรู้ขึ้นมาภายใน configuration หนึ่ง `output` block เปิดเผยมันออกมา แล้วสิ่งอื่น ไม่ว่าจะเป็น parent module หรือ dependent unit ก็นำไปใช้ต่อ
+ภายใน root configuration เดียว `output` ส่วนใหญ่เป็นแค่ข้อมูลไว้ดู เป็นวิธีสะดวกในการโชว์ค่าให้คนที่รัน `terraform apply` เห็นเฉย ๆ ความสำคัญจริง ๆ จะเห็นชัดตอนที่ configuration ไม่ได้เป็นก้อนเดียวโดด ๆ อีกต่อไป เวลาแยก infrastructure ออกเป็น module, module ไม่มีทางอื่นเลยที่จะส่งค่าที่คำนวณไว้กลับไปให้ผู้เรียกใช้ได้ นอกจากผ่าน `output` block ของตัวเอง — module เรื่อง Modules ในคอร์สนี้จะพูดถึง `module.<name>.<output>` แบบละเอียดทีหลัง เวลาแยก infrastructure ออกเป็น Terragrunt unit ที่ deploy แยกกันแทน `dependency` block จะอ่าน output ของ unit อื่นเพื่อเชื่อม unit เข้าด้วยกันโดยไม่ต้อง hard-code ค่าใด ๆ ระหว่างกันเลย — pattern นี้จะมี module Terragrunt แยกไว้พูดถึงทีหลัง ทั้งสองกรณีใช้กลไกเดียวกันกับที่เห็นตรงนี้ ค่าถูกรู้ขึ้นมาภายใน configuration หนึ่ง `output` block เปิดเผยออกมา แล้วสิ่งอื่น ไม่ว่าจะเป็น parent module หรือ dependent unit ก็นำไปใช้ต่อ
 
 <Mermaid title="A local feeds two resources, and a resource attribute becomes an output" code={localsOutputsDiagram} />
 
@@ -99,7 +99,7 @@ export const localsOutputsDiagram = `flowchart LR
   ob --> dep["dependency block or module output reference"]`;
 
 <Callout title="The one-line takeaway">
-**`local`** คือ expression ที่มีชื่อ คำนวณครั้งเดียวภายใน configuration แล้วนำกลับมาใช้ซ้ำทุกที่ที่ต้องใช้ผล ไม่มีใครนอก configuration ตั้งค่าหรืออ่านมันโดยตรงได้ ทำให้มันต่างจากทั้ง **`variable`** ที่ caller ส่งเข้ามา และ **`output`** ที่มองเห็นได้จากภายนอก **`output`** block เปิดเผยค่าหลัง `apply` อ่านได้ด้วย `terraform output`, `terraform output <name>` หรือแบบ machine-readable ผ่าน `terraform output -json` ส่วน `sensitive = true` ซ่อนค่าจาก CLI output ธรรมดาเหมือนกับที่ทำบน variable โดยไม่ได้ตัดค่าออกจาก **state** ไปด้วย นอกเหนือจาก root configuration เดียว outputs คือสิ่งที่ทำให้ composition เกิดขึ้นได้ มันคือวิธีที่ module ส่งค่ากลับไปให้คนเรียก และวิธีที่ `dependency` block ใน Terragrunt อ่านค่าจาก unit หนึ่งไปยังอีก unit หนึ่ง
+**`local`** คือ expression ที่มีชื่อ คำนวณครั้งเดียวภายใน configuration แล้วนำกลับมาใช้ซ้ำทุกที่ที่ต้องใช้ผล ไม่มีใครนอก configuration ตั้งค่าหรืออ่านโดยตรงได้ ทำให้ต่างจากทั้ง **`variable`** ที่ caller ส่งเข้ามา และ **`output`** ที่มองเห็นได้จากภายนอก **`output`** block เปิดเผยค่าหลัง `apply` อ่านได้ด้วย `terraform output`, `terraform output <name>` หรือแบบ machine-readable ผ่าน `terraform output -json` ส่วน `sensitive = true` ซ่อนค่าจาก CLI output ธรรมดาเหมือนกับที่ทำบน variable โดยไม่ได้ตัดค่าออกจาก **state** ไปด้วย นอกเหนือจาก root configuration เดียว outputs คือสิ่งที่ทำให้ composition เกิดขึ้นได้ นั่นคือวิธีที่ module ส่งค่ากลับไปให้ผู้เรียกใช้ และวิธีที่ `dependency` block ใน Terragrunt อ่านค่าจาก unit หนึ่งไปยังอีก unit หนึ่ง
 </Callout>
 
 export const quizOutputsAndLocals = [

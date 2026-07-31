@@ -19,7 +19,7 @@ pipeline มาตรฐานสำหรับ infrastructure รัน `plan`
 pattern ที่ทีมส่วนใหญ่ลงเอยด้วยกันนั้นคล้าย CI/CD ของ application แต่มีจุดต่างสำคัญตรงว่าแต่ละ stage ทำอะไรจริง ๆ
 
 - **เปิดหรืออัปเดต pull request** → รัน `terraform plan` (หรือ `terragrunt run --all plan` สำหรับ setup ที่มีหลาย unit ใน Terragrunt) แล้ว post diff ที่ได้เป็น comment บน pull request ยังไม่มีอะไรเปลี่ยนบน AWS จริง ๆ ตรงนี้เป็นแค่ dry run ที่หน้าที่เดียวคือทำให้ change ที่เสนอมามองเห็นได้ก่อนที่ใครจะกด approve
-- **merge เข้า main** → รัน `terraform apply` (หรือ `terragrunt run --all apply`) จาก pipeline เอง ไม่ใช่จาก laptop ของใคร สำหรับ production โดยเฉพาะ step นี้มักถูก gate ไว้ด้วย manual approval — reviewer หรือทีมที่กำหนดต้องกด "approve" ใน CI system ก่อนที่ apply job จะรันได้ ถึงแม้ plan จะถูก review ไปแล้วตอน pull request
+- **merge เข้า main** → รัน `terraform apply` (หรือ `terragrunt run --all apply`) จาก pipeline เอง ไม่ใช่จาก laptop ของใคร สำหรับ production โดยเฉพาะ step นี้มักถูก gate ไว้ด้วย manual approval — reviewer หรือทีมที่กำหนดต้องกด "approve" ใน CI system ก่อนที่ apply job จะรันได้ ถึงแม้จะ review plan ไปแล้วตอน pull request
 
 ```yaml
 name: terraform
@@ -73,9 +73,9 @@ jobs:
 
 ## ทำไม plan ต้อง review ละเอียดกว่า code diff ทั่วไป
 
-pull request ของ application code จะถูก review เรื่อง logic, test, และ style — worst case คือ bug หลุดไปแล้วต้อง roll back แต่ infrastructure `apply` ทำอะไรที่ code deploy ทำไม่ได้ คือทำลาย resource จริงที่มี state บน AWS แล้วสร้างขึ้นใหม่ทั้งหมด บางครั้งแค่เพราะ change บรรทัดเดียว
+pull request ของ application code จะได้รับการ review เรื่อง logic, test, และ style — worst case คือ bug หลุดไปแล้วต้อง roll back แต่ infrastructure `apply` ทำอะไรที่ code deploy ทำไม่ได้ คือทำลาย resource จริงที่มี state บน AWS แล้วสร้างขึ้นใหม่ทั้งหมด บางครั้งแค่เพราะ change บรรทัดเดียว
 
-Terraform เรียกสิ่งนี้ว่า **forced replacement** argument บางตัวของ resource บางประเภทอัปเดตแบบ in place ไม่ได้ — เปลี่ยนมันแปลว่า provider ไม่มี API call สำหรับ "แก้ attribute นี้" มีแต่ "ทำลายแล้วสร้างใหม่" `identifier` ของ RDS instance, `availability_zone` ของ EBS volume หรือแม้แต่ชื่อของ resource เองใน provider บางตัวก็เข้าข่ายนี้ทั้งนั้น เมื่อเจอแบบนี้ `terraform plan` จะทำเครื่องหมาย resource นั้นด้วย `-/+` แทนที่จะเป็น `~` แบบ in-place
+Terraform เรียกสิ่งนี้ว่า **forced replacement** argument บางตัวของ resource บางประเภทอัปเดตแบบ in place ไม่ได้ — เปลี่ยนค่าเหล่านั้นแปลว่า provider ไม่มี API call สำหรับ "แก้ attribute นี้" มีแต่ "ทำลายแล้วสร้างใหม่" `identifier` ของ RDS instance, `availability_zone` ของ EBS volume หรือแม้แต่ชื่อของ resource เองใน provider บางตัวก็เข้าข่ายนี้ทั้งนั้น เมื่อเจอแบบนี้ `terraform plan` จะทำเครื่องหมาย resource นั้นด้วย `-/+` แทนที่จะเป็น `~` แบบ in-place
 
 ```bash
 # terraform plan output — this is the line to stop and read carefully
@@ -91,7 +91,7 @@ Terraform เรียกสิ่งนี้ว่า **forced replacement** a
 
 ## OIDC credential แบบ short-lived แทน access key ที่เก็บไว้
 
-pipeline รุ่นเก่าเก็บ AWS access key กับ secret แบบ long-lived ไว้เป็น CI secret แล้ว export เป็น environment variable ก่อนรันทุกครั้ง key นั้นใช้ได้ทั้ง `plan` และ `apply` เหมือนกันหมด ซึ่งนั่นแหละคือปัญหา ถ้ามันหลุดออกไปเมื่อไหร่ — จาก log ที่ config ผิด, dependency ที่ถูก compromise, หรือ workflow file ที่ echo environment variable ออกมา — มันก็ยังใช้งานได้ต่อไปจนกว่าจะมีคน rotate หรือ revoke ด้วยมือ
+pipeline รุ่นเก่าเก็บ AWS access key กับ secret แบบ long-lived ไว้เป็น CI secret แล้ว export เป็น environment variable ก่อนรันทุกครั้ง key นั้นใช้ได้ทั้ง `plan` และ `apply` เหมือนกันหมด ซึ่งนั่นแหละคือปัญหา ถ้าหลุดออกไปเมื่อไหร่ — จาก log ที่ config ผิด, dependency ที่ถูก compromise, หรือ workflow file ที่ echo environment variable ออกมา — ก็ยังใช้งานได้ต่อไปจนกว่าจะมีคน rotate หรือ revoke ด้วยมือ
 
 practice ปัจจุบันแทนที่ key นั้นด้วย **OIDC federation** GitHub Actions ส่ง identity token แบบ short-lived ที่ sign ด้วย cryptographic ให้ AWS ได้ในทุก workflow run IAM OIDC identity provider ใน AWS account เชื่อถือ token issuer ของ GitHub และ trust policy ของ IAM role อนุญาตเฉพาะ repository และ branch ที่กำหนดให้ assume ได้ `aws-actions/configure-aws-credentials` แลก token นั้นเป็น AWS credential ชั่วคราวที่ scope ไว้กับ role ที่ assume มา อายุเท่ากับ job นั้นเท่านั้น ไม่มากไปกว่านั้น
 
@@ -156,10 +156,10 @@ export const quizCicdPipeline = [
   {
     q: '-/+ ข้าง resource ใน terraform plan output แปลว่าอะไร',
     options: [
-      'resource จะถูก update in place โดยไม่มี downtime',
+      'resource จะ update in place โดยไม่มี downtime',
       'resource ต้องถูกทำลายแล้วสร้างใหม่ เพราะ argument ที่เปลี่ยนไป force ให้ replace แทนที่จะ update in place',
       'Terraform หาไม่ได้ว่า resource เปลี่ยนไปหรือเปล่า',
-      'resource จะถูก import จาก infrastructure ที่มีอยู่แล้ว',
+      'resource จะ import จาก infrastructure ที่มีอยู่แล้ว',
     ],
     answer: 1,
   },
@@ -167,7 +167,7 @@ export const quizCicdPipeline = [
     q: 'ทำไม OIDC federation ถึงดีกว่า AWS access key แบบ long-lived ที่เก็บเป็น CI secret',
     options: [
       'OIDC federation ช้ากว่าแต่ปลอดภัยกว่า เลยใช้เฉพาะ production เท่านั้น',
-      'มันออก credential แบบ short-lived และ scope เฉพาะแต่ละ run โดยให้ CI system assume IAM role ผ่าน identity token ที่เชื่อถือได้ ไม่ต้องเก็บหรือ rotate AWS key แบบ long-lived ใน CI เลย',
+      'ออก credential แบบ short-lived และ scope เฉพาะแต่ละ run โดยให้ CI system assume IAM role ผ่าน identity token ที่เชื่อถือได้ ไม่ต้องเก็บหรือ rotate AWS key แบบ long-lived ใน CI เลย',
       'OIDC federation ทำให้ไม่ต้องมี IAM role เลย',
       'access key แบบ long-lived จำเป็นสำหรับให้ terraform apply ทำงานได้เท่านั้น',
     ],

@@ -12,7 +12,7 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 ## ไอเดียในหนึ่งประโยค
 
-directory-per-environment ให้แต่ละ environment มี directory ที่แยกจากกันจริง ๆ พร้อม backend configuration ของตัวเอง ในขณะที่ root config ของทุก environment เรียก shared module เดียวกัน ด้วยค่า input ที่ต่างกัน
+directory-per-environment ให้แต่ละ environment มี directory ที่แยกจากกันจริง ๆ พร้อม backend configuration ของตัวเอง โดยที่ root config ของทุก environment เรียก shared module เดียวกัน ด้วยค่า input ที่ต่างกัน
 
 ## directory จริง, backend จริง, ต่อ environment
 
@@ -87,7 +87,7 @@ module "app" {
 
 ## สิ่งที่ pattern นี้แก้ได้จริง
 
-ตรงนี้แก้ปัญหา isolation ที่อ่อนแอของ workspace ได้ตรง ๆ แต่ละ environment directory ชี้ไปยัง AWS account ของตัวเอง, region ของตัวเอง, และ backend bucket ของตัวเองได้ โดยไม่มีอะไรผูกมัดกันในระดับ Terraform เลย ไม่มี state file ร่วมให้ชื่อ workspace ที่พิมพ์ผิดไปแตะโดยพลาด และไม่มี provider block ร่วมให้ credential ผิดหลุดเข้าไปได้ ถ้า `dev` กับ `prod` ต้องอยู่คนละ AWS account จริง ๆ เพื่อ blast-radius isolation pattern นี้ทำได้ ในขณะที่ workspace ทำไม่ได้
+ตรงนี้แก้ปัญหา isolation ที่อ่อนแอของ workspace ได้ตรง ๆ แต่ละ environment directory ชี้ไปยัง AWS account ของตัวเอง, region ของตัวเอง, และ backend bucket ของตัวเองได้ โดยไม่มีอะไรผูกมัดกันในระดับ Terraform เลย ไม่มี state file ร่วมให้ชื่อ workspace ที่พิมพ์ผิดไปแตะโดยพลาด และไม่มี provider block ร่วมให้ credential ผิดหลุดเข้าไปได้ ถ้า `dev` กับ `prod` ต้องอยู่คนละ AWS account จริง ๆ เพื่อ blast-radius isolation pattern นี้ทำได้ ส่วน workspace ทำไม่ได้
 
 ## ปัญหา DRY ที่ pattern นี้พาเอากลับมา
 
@@ -104,17 +104,17 @@ export const dirPerEnvDiagram = `flowchart LR
   stagingEnv -.->|near-identical backend + provider + source blocks| prodEnv`;
 
 <Callout title="สรุปหนึ่งบรรทัด">
-directory-per-environment ให้แต่ละ environment มี directory จริงที่แยกกัน พร้อม **backend** และ **provider** configuration ของตัวเอง แม้แต่ AWS account ที่แยกกันก็ทำได้ ในขณะที่ root config ของทุก directory เรียก **shared module** เดียวกันด้วย input ที่ต่างกัน แก้ปัญหา isolation ที่อ่อนแอของ workspace ได้ ข้อแลกเปลี่ยนคือ backend block, provider block, และ argument `source` ของ module จบลงด้วยการซ้ำแทบทุกตัวอักษรในทุก environment directory โดยมีแค่ค่า input ไม่กี่ตัวที่ต่างกันจริง ๆ พาปัญหา DRY เวอร์ชันย่อยกลับมาอีกครั้ง แบบเดียวกับที่ module นี้เริ่มต้นไว้
+directory-per-environment ให้แต่ละ environment มี directory จริงที่แยกกัน พร้อม **backend** และ **provider** configuration ของตัวเอง แม้แต่ AWS account ที่แยกกันก็ทำได้ โดยที่ root config ของทุก directory เรียก **shared module** เดียวกันด้วย input ที่ต่างกัน แก้ปัญหา isolation ที่อ่อนแอของ workspace ได้ ข้อแลกเปลี่ยนคือ backend block, provider block, และ argument `source` ของ module จบลงด้วยการซ้ำแทบทุกตัวอักษรในทุก environment directory โดยมีแค่ค่า input ไม่กี่ตัวที่ต่างกันจริง ๆ พาปัญหา DRY เวอร์ชันย่อยกลับมาอีกครั้ง แบบเดียวกับที่ module นี้เริ่มต้นไว้
 </Callout>
 
 export const quizDirPerEnv = [
   {
     q: 'directory-per-environment pattern แก้ปัญหาอะไรที่ Terraform workspace แก้ไม่ได้',
     options: [
-      'มันทำให้ไม่ต้องมี backend configuration เลย',
-      'มันให้แต่ละ environment มี backend, provider configuration ที่แยกกันจริง และอาจมี AWS account แยกกันได้ เพราะ environment ไม่แชร์ backend และโค้ด .tf เดียวกันแบบที่ workspace ทำ',
-      'มันทำให้ terraform apply เร็วขึ้น',
-      'มันสร้างเอกสารให้แต่ละ environment อัตโนมัติ',
+      'ทำให้ไม่ต้องมี backend configuration เลย',
+      'ให้แต่ละ environment มี backend, provider configuration ที่แยกกันจริง และอาจมี AWS account แยกกันได้ เพราะ environment ไม่แชร์ backend และโค้ด .tf เดียวกันแบบที่ workspace ทำ',
+      'ทำให้ terraform apply เร็วขึ้น',
+      'สร้างเอกสารให้แต่ละ environment อัตโนมัติ',
     ],
     answer: 1,
   },
@@ -129,7 +129,7 @@ export const quizDirPerEnv = [
     answer: 1,
   },
   {
-    q: 'อะไรที่ยังถูก duplicate ข้าม environment directory ใน pattern นี้ ทั้งที่มันแก้ปัญหา isolation ได้แล้ว',
+    q: 'อะไรที่ยังถูก duplicate ข้าม environment directory ใน pattern นี้ ทั้งที่แก้ปัญหา isolation ได้แล้ว',
     options: [
       'ไม่มีเลย pattern นี้ไม่มีการ duplicate ใด ๆ',
       'backend block, provider block, และ argument source กับ version ของ module ซึ่งซ้ำกันแทบทุกตัวอักษรในทุก environment directory มีแค่ key กับ input เท่านั้นที่ต่างกัน',

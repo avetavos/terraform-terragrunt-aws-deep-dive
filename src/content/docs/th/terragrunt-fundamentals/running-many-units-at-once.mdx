@@ -27,7 +27,7 @@ terragrunt run --all apply
 
 command surface สำหรับหลาย unit ของ Terragrunt เปลี่ยนไปแล้ว และ blog post กับคำตอบเก่า ๆ จำนวนมากบนอินเทอร์เน็ตก็ยังพูดถึง syntax เก่าอยู่ มีประวัติสองยุคที่ควรรู้ไว้ เพื่อไม่ให้โดนคำแนะนำเก่าหลอก
 
-`terragrunt plan-all` กับ `terragrunt apply-all` (รวมถึง `destroy-all`, `output-all`, `validate-all`) ถูก **ลบออกไปทั้งหมด** จาก Terragrunt เวอร์ชันปัจจุบันแล้ว มันไม่มีอยู่อีกต่อไป รันแล้วจะ fail เฉย ๆ อย่าใช้คำสั่งเหล่านี้ และให้ถือว่า tutorial ไหนที่ยังพึ่งคำสั่งพวกนี้อยู่ เขียนมาสำหรับ Terragrunt เวอร์ชันเก่ามาก
+`terragrunt plan-all` กับ `terragrunt apply-all` (รวมถึง `destroy-all`, `output-all`, `validate-all`) ถูก **ลบออกไปทั้งหมด** จาก Terragrunt เวอร์ชันปัจจุบันแล้ว ไม่มีอยู่อีกต่อไป รันแล้วจะ fail เฉย ๆ อย่าใช้คำสั่งเหล่านี้ และให้ถือว่า tutorial ไหนที่ยังพึ่งคำสั่งพวกนี้อยู่ เขียนมาสำหรับ Terragrunt เวอร์ชันเก่ามาก
 
 ```bash
 # Removed entirely — these commands no longer exist in current Terragrunt
@@ -35,7 +35,7 @@ terragrunt plan-all
 terragrunt apply-all
 ```
 
-`terragrunt run-all <command>` ยังรันได้อยู่ทุกวันนี้ แต่ **deprecated** แล้ว กำลังถูกแทนที่ด้วย `run --all` ซึ่งเป็น syntax ที่คอร์สนี้สอน
+`terragrunt run-all <command>` ยังรันได้อยู่ทุกวันนี้ แต่ **deprecated** แล้ว กำลังถูกแทนที่ด้วย `run --all` ที่เป็น syntax ที่คอร์สนี้สอน
 
 ```bash
 # Deprecated — being replaced by run --all; avoid in new configuration
@@ -44,7 +44,7 @@ terragrunt run-all plan
 
 ## scope run --all ให้แคบลง และรันแบบ non-interactive
 
-บางครั้งคุณไม่อยากรันทุก unit ใน tree อยากรันแค่บางส่วน เช่น เฉพาะที่อยู่ใต้ region เดียว โดยไม่แตะส่วนที่เหลือของ tree เลย flag `--filter` ทำหน้าที่นี้ โดย match unit ด้วย path glob flag ที่วางไว้ก่อนคำสั่งต้องมี separator `--` เพื่อให้ Terragrunt รู้ว่า flag ของตัวมันจบตรงไหน แล้วคำสั่งของแต่ละ unit เริ่มตรงไหน
+บางครั้งคุณไม่อยากรันทุก unit ใน tree อยากรันแค่บางส่วน เช่น เฉพาะที่อยู่ใต้ region เดียว โดยไม่แตะส่วนที่เหลือของ tree เลย flag `--filter` ทำหน้าที่นี้ โดย match unit ด้วย path glob flag ที่วางไว้ก่อนคำสั่งต้องมี separator `--` เพื่อให้ Terragrunt รู้ว่า flag ของตัวเองจบตรงไหน แล้วคำสั่งของแต่ละ unit เริ่มตรงไหน
 
 ```bash
 # Only plan units under ./networking (and anything depending on them)
@@ -77,7 +77,7 @@ terraform {
 }
 ```
 
-`commands` list ว่า Terragrunt command ไหนบ้างที่ trigger hook นี้ `execute` คือคำสั่งจริงที่ Terragrunt รัน (เป็น argument list ไม่ใช่ shell string) และ `run_on_error` ควบคุมว่า `after_hook` จะยังรันไหมถ้า operation ที่มันติดอยู่ด้วย fail ระหว่าง `run --all apply` ที่ทำกับหลาย unit hook ของแต่ละ unit จะทำงานรอบ ๆ apply ของ unit นั้น ๆ เอง Slack notification ข้างบนจะยิงหนึ่งครั้งต่อ unit ที่ apply สำเร็จ ไม่ใช่ยิงครั้งเดียวสำหรับทั้ง run
+`commands` list ว่า Terragrunt command ไหนบ้างที่ trigger hook นี้ `execute` คือคำสั่งจริงที่ Terragrunt รัน (เป็น argument list ไม่ใช่ shell string) และ `run_on_error` ควบคุมว่า `after_hook` จะยังรันไหมถ้า operation ที่ผูกอยู่ด้วย fail ระหว่าง `run --all apply` ที่ทำกับหลาย unit hook ของแต่ละ unit จะทำงานรอบ ๆ apply ของ unit นั้น ๆ เอง Slack notification ข้างบนจะยิงหนึ่งครั้งต่อ unit ที่ apply สำเร็จ ไม่ใช่ยิงครั้งเดียวสำหรับทั้ง run
 
 <Mermaid title="run --all apply กระจายไปทั่ว unit ตามลำดับ dependency พร้อม hook ที่ยิงหลัง apply ของ unit หนึ่ง" code={runAllDiagram} />
 
@@ -97,13 +97,13 @@ export const quizRunAll = [
     options: [
       'terragrunt plan-all',
       'terragrunt run --all plan',
-      'terragrunt run-all plan ซึ่งเป็น syntax ที่แนะนำในปัจจุบัน',
+      'terragrunt run-all plan ที่เป็น syntax ที่แนะนำในปัจจุบัน',
       'terragrunt apply --all',
     ],
     answer: 1,
   },
   {
-    q: 'terragrunt plan-all กับ apply-all เกิดอะไรขึ้นกับมัน',
+    q: 'terragrunt plan-all กับ apply-all เกิดอะไรขึ้น',
     options: [
       'ถูกเปลี่ยนชื่อเป็น run --all plan กับ run --all apply แต่ชื่อเดิมก็ยังใช้ได้อยู่',
       'ถูกลบออกไปทั้งหมดแล้วจาก Terragrunt เวอร์ชันปัจจุบัน ไม่มีอยู่อีกต่อไป',

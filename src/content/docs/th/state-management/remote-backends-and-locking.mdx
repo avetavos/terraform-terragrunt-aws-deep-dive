@@ -20,7 +20,7 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 - เพื่อนร่วมทีม A รัน `apply` แล้วสร้าง VPC local state file บน laptop ของเขารู้เรื่องนี้แล้ว
 - เพื่อนร่วมทีม B บน laptop คนละเครื่อง ไม่เคยเห็น state file นั้นเลย เขารัน `plan` เทียบกับ local state ที่เก่าหรือว่างเปล่าของตัวเอง แล้วอาจพยายามสร้าง VPC ซ้ำ หรือได้ plan ที่ไม่สมเหตุสมผลเมื่อเทียบกับของจริงที่มีอยู่แล้ว
-- CI/CD pipeline เจอปัญหาเดียวกันแต่หนักกว่า pipeline runner คือ environment ใหม่ที่ใช้แล้วทิ้ง ไม่มี local state file ติดตัวมาเลย มันต้องการ state ฉบับกลางที่อ่านและเขียนได้ทุกครั้งที่รัน ไม่ใช่ copy ที่บังเอิญไปอยู่บน laptop ของใครสักคน
+- CI/CD pipeline เจอปัญหาเดียวกันแต่หนักกว่า pipeline runner คือ environment ใหม่ที่ใช้แล้วทิ้ง ไม่มี local state file ติดตัวมาเลย จึงต้องการ state ฉบับกลางที่อ่านและเขียนได้ทุกครั้งที่รัน ไม่ใช่ copy ที่บังเอิญไปอยู่บน laptop ของใครสักคน
 
 ทางแก้คือย้าย state ออกจากเครื่องใครเครื่องคนหนึ่ง ไปไว้บน backend กลางที่ทั้งทีมและทุก CI run ชี้ไปที่เดียวกัน
 
@@ -56,13 +56,13 @@ terraform {
 }
 ```
 
-pattern นั้นยังทำงานได้ และไม่ต้องตกใจถ้าคุณรับ codebase ที่ใช้แบบนี้มา แต่ `dynamodb_table` ตอนนี้เป็น argument ที่ deprecated แล้วบน S3 backend และมีแผนจะถูกลบออกในเวอร์ชันถัดไปของ Terraform configuration ใหม่ควรใช้ `use_lockfile = true` แทน มันทำหน้าที่เดียวกันโดยไม่ต้องสร้าง AWS resource ตัวที่สองมาดูแลและจ่ายเงินเพิ่ม
+pattern นั้นยังทำงานได้ และไม่ต้องตกใจถ้าคุณรับ codebase ที่ใช้แบบนี้มา แต่ `dynamodb_table` ตอนนี้เป็น argument ที่ deprecated แล้วบน S3 backend และมีแผนจะลบออกในเวอร์ชันถัดไปของ Terraform configuration ใหม่ควรใช้ `use_lockfile = true` แทน เพราะทำหน้าที่เดียวกันโดยไม่ต้องสร้าง AWS resource ตัวที่สองมาดูแลและจ่ายเงินเพิ่ม
 
 ## locking ป้องกันอะไรจริง ๆ
 
 ลองนึกภาพว่าไม่มี locking เลย สองคน หรือคนกับ CI run รัน `terraform apply` เทียบกับ state บน S3 เดียวกันในเวลาที่ใกล้กันมาก ทั้งคู่อ่าน state ปัจจุบัน ทั้งคู่คำนวณ plan และทั้งคู่เริ่มเขียนผลกลับไปที่ state object เดียวกัน ขึ้นอยู่กับ timing การเขียนครั้งที่สองอาจเขียนทับครั้งแรก — ทำให้การเปลี่ยนแปลงที่ record ไว้จาก run แรกหายไปเงียบ ๆ ทั้งที่ infrastructure ของ run แรกถูกเปลี่ยนจริงไปแล้ว หรือ state file อาจ corrupt ระหว่างเขียน
 
-lock เปลี่ยน race นี้ให้กลายเป็นคิว `apply` ตัวแรกที่เริ่มจะได้ lock ไป `apply` ตัวที่สองจะรอให้ lock ถูกปล่อย หรือ fail ทันทีพร้อม error ที่ชัดเจน ขึ้นอยู่กับ flag ที่ใช้ ไม่ว่าทางไหน run ตัวที่สองก็ไม่มีทางเขียนทับ state ของ run แรกในระหว่างที่มันยังทำงานอยู่
+lock เปลี่ยน race นี้ให้กลายเป็นคิว `apply` ตัวแรกที่เริ่มจะได้ lock ไป `apply` ตัวที่สองจะรอให้ lock ถูกปล่อย หรือ fail ทันทีพร้อม error ที่ชัดเจน ขึ้นอยู่กับ flag ที่ใช้ ไม่ว่าทางไหน run ตัวที่สองก็ไม่มีทางเขียนทับ state ของ run แรกในระหว่างที่ run แรกยังทำงานอยู่
 
 ```bash
 # A run that finds the state already locked fails fast with a clear message,
@@ -79,7 +79,7 @@ export const lockingDiagram = `flowchart LR
   s3 -->|lock released after apply| eng2`;
 
 <Callout title="สรุปหนึ่งบรรทัด">
-**remote backend** อย่าง S3 ทำให้เพื่อนร่วมทีมทุกคนและทุก CI run เห็น state ฉบับกลางเดียวกัน แทนที่แต่ละเครื่องจะถือไฟล์ local ของตัวเองที่ค่อย ๆ เพี้ยนไปคนละทาง **locking** — ที่ปัจจุบัน config ด้วย `use_lockfile = true` ตรงบน S3 backend เลย ไม่ต้องมี DynamoDB table — ป้องกันไม่ให้ `apply` สองตัวเขียนทับ state ที่ share กันพร้อมกัน ซึ่งถ้าไม่มี lock อาจทำให้ state corrupt หรือทำให้การเปลี่ยนแปลงของ run หนึ่งหายไปเงียบ ๆ argument `dynamodb_table` แบบเก่ายังทำงานได้แต่ **deprecated** แล้วและมีแผนจะถูกลบ ควรใช้ `use_lockfile = true` กับ configuration ใหม่
+**remote backend** อย่าง S3 ทำให้เพื่อนร่วมทีมทุกคนและทุก CI run เห็น state ฉบับกลางเดียวกัน แทนที่แต่ละเครื่องจะถือไฟล์ local ของตัวเองที่ค่อย ๆ เพี้ยนไปคนละทาง **locking** — ที่ปัจจุบัน config ด้วย `use_lockfile = true` ตรงบน S3 backend เลย ไม่ต้องมี DynamoDB table — ป้องกันไม่ให้ `apply` สองตัวเขียนทับ state ที่ share กันพร้อมกัน ซึ่งถ้าไม่มี lock อาจทำให้ state corrupt หรือทำให้การเปลี่ยนแปลงของ run หนึ่งหายไปเงียบ ๆ argument `dynamodb_table` แบบเก่ายังทำงานได้แต่ **deprecated** แล้วและมีแผนจะลบออก ควรใช้ `use_lockfile = true` กับ configuration ใหม่
 </Callout>
 
 export const quizBackends = [
@@ -96,20 +96,20 @@ export const quizBackends = [
   {
     q: 'use_lockfile = true บน S3 backend ให้อะไร และทำไมตอนนี้ถึงเป็นที่นิยมกว่า DynamoDB table',
     options: [
-      'มันเปิด versioning บน S3 bucket ให้อัตโนมัติ',
-      'มันให้ native state locking โดยใช้ conditional-write lock file ตรงใน S3 เอง ทำให้ไม่ต้องมี DynamoDB table แยกที่ argument dynamodb_table แบบเก่าต้องการ',
-      'มันเข้ารหัส state file ที่ rest ซึ่ง DynamoDB locking ทำไม่ได้',
-      'มันไม่มีผลอะไรเลย DynamoDB locking ยังจำเป็นสำหรับความถูกต้องอยู่ดี',
+      'เปิด versioning บน S3 bucket ให้อัตโนมัติ',
+      'ให้ native state locking โดยใช้ conditional-write lock file ตรงใน S3 เอง ทำให้ไม่ต้องมี DynamoDB table แยกที่ argument dynamodb_table แบบเก่าต้องการ',
+      'เข้ารหัส state file ที่ rest ซึ่ง DynamoDB locking ทำไม่ได้',
+      'ไม่มีผลอะไรเลย DynamoDB locking ยังจำเป็นสำหรับความถูกต้องอยู่ดี',
     ],
     answer: 1,
   },
   {
     q: 'state locking ป้องกันอะไรจริง ๆ',
     options: [
-      'มันกันไม่ให้ใครรัน terraform plan ได้เลย',
-      'มันกันไม่ให้ apply สองตัวเขียนทับ state file เดียวกันพร้อมกัน ซึ่งอาจทำให้ state corrupt หรือทำให้การเปลี่ยนแปลงหายไป',
-      'มันกันไม่ให้ Terraform อ่าน state file ได้เลย',
-      'มันกันไม่ให้ resource ถูกลบโดยไม่ตั้งใจ',
+      'กันไม่ให้ใครรัน terraform plan ได้เลย',
+      'กันไม่ให้ apply สองตัวเขียนทับ state file เดียวกันพร้อมกัน ซึ่งอาจทำให้ state corrupt หรือทำให้การเปลี่ยนแปลงหายไป',
+      'กันไม่ให้ Terraform อ่าน state file ได้เลย',
+      'กันไม่ให้ resource ถูกลบโดยไม่ตั้งใจ',
     ],
     answer: 1,
   },

@@ -16,7 +16,7 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 ## include กับ find_in_parent_folders
 
-`vpc/terragrunt.hcl` ในบทที่แล้วเปิดด้วย block นี้ ตอนนี้ถึงเวลาอธิบายมันให้ชัดเจน
+`vpc/terragrunt.hcl` ในบทที่แล้วเปิดด้วย block นี้ ตอนนี้ถึงเวลาอธิบายให้ชัดเจน
 
 ```hcl
 # prod/us-east-1/vpc/terragrunt.hcl
@@ -25,9 +25,9 @@ include "root" {
 }
 ```
 
-`find_in_parent_folders("root.hcl")` เดินขึ้น directory tree จากตำแหน่งของ unit ปัจจุบัน ทีละชั้น จนกว่าจะเจอไฟล์ที่ชื่อ `root.hcl` เป๊ะ ๆ จากนั้น `include "root"` จะ merge ทุกอย่างที่ไฟล์นั้นประกาศไว้เข้ามาใน config ของ unit ปัจจุบัน เหมือนกับพิมพ์มันไว้ตรงนั้นเองตรง ๆ ทั้ง `remote_state` block, `backend.tf` ที่ generate ไว้, provider `generate` block ทั้งหมด
+`find_in_parent_folders("root.hcl")` เดินขึ้น directory tree จากตำแหน่งของ unit ปัจจุบัน ทีละชั้น จนกว่าจะเจอไฟล์ที่ชื่อ `root.hcl` เป๊ะ ๆ จากนั้น `include "root"` จะ merge ทุกอย่างที่ไฟล์นั้นประกาศไว้เข้ามาใน config ของ unit ปัจจุบัน เหมือนกับพิมพ์ไว้ตรงนั้นเอง ทั้ง `remote_state` block, `backend.tf` ที่ generate ไว้, provider `generate` block ทั้งหมด
 
-ที่การเดินหาแบบนี้สำคัญก็เพราะ `include` บรรทัดเดียวกันเป๊ะใช้ได้ทั้งกับ unit ที่อยู่ต่ำกว่า `root.hcl` แค่ชั้นเดียวหรือลึกไปห้าชั้น ย้าย unit ไปอยู่ subdirectory ใหม่ตอน reorganize โครงสร้าง บรรทัดนี้ก็ยังทำงานเหมือนเดิมไม่ต้องแก้ มันไม่เคย hard-code relative path แบบ `../../../root.hcl` ที่จะพังทันทีที่โครงสร้าง tree เปลี่ยนไป
+ที่การเดินหาแบบนี้สำคัญก็เพราะ `include` บรรทัดเดียวกันเป๊ะใช้ได้ทั้งกับ unit ที่อยู่ต่ำกว่า `root.hcl` แค่ชั้นเดียวหรือลึกไปห้าชั้น ย้าย unit ไปอยู่ subdirectory ใหม่ตอน reorganize โครงสร้าง บรรทัดนี้ก็ยังทำงานเหมือนเดิมไม่ต้องแก้ เพราะไม่เคย hard-code relative path แบบ `../../../root.hcl` ที่จะพังทันทีที่โครงสร้าง tree เปลี่ยนไป
 
 ## locals กับ read_terragrunt_config สำหรับหนึ่งชั้นถัดลงมา
 
@@ -40,7 +40,7 @@ locals {
 }
 ```
 
-unit ที่อยู่ใต้ directory ของ region นั้นอ่านมันด้วย `read_terragrunt_config()` ผสมกับ `find_in_parent_folders()` ตัวเดิมที่คุณรู้จักแล้ว
+unit ที่อยู่ใต้ directory ของ region นั้นอ่านไฟล์นั้นด้วย `read_terragrunt_config()` ผสมกับ `find_in_parent_folders()` ตัวเดิมที่คุณรู้จักแล้ว
 
 ```hcl
 # prod/us-east-1/vpc/terragrunt.hcl
@@ -62,13 +62,13 @@ inputs = {
 }
 ```
 
-`read_terragrunt_config()` parse Terragrunt config ไฟล์อื่นแล้วส่งเนื้อหาของมันกลับมาเป็นค่า และ `locals` block ของไฟล์นั้นจะซ้อนอยู่ใต้ `.locals` ในผลลัพธ์ จึงเขียนเป็น `local.region_vars.locals.aws_region` unit ที่อยู่ใต้ `prod/ap-southeast-1/` ก็จะมี `region.hcl` ของตัวเองที่ประกาศ `aws_region = "ap-southeast-1"` ในขณะที่ unit ไหนก็ตามในทั้ง tree ยังคง share `root.hcl` เดียวกันสำหรับ backend และ provider root เดียวกัน แต่ region ต่างกันในแต่ละ subtree โดยไม่มี unit ไหนต้อง hard-code region ของตัวเองไว้ตรง ๆ เลย
+`read_terragrunt_config()` parse Terragrunt config ไฟล์อื่นแล้วส่งเนื้อหากลับมาเป็นค่า และ `locals` block ของไฟล์นั้นจะซ้อนอยู่ใต้ `.locals` ในผลลัพธ์ จึงเขียนเป็น `local.region_vars.locals.aws_region` unit ที่อยู่ใต้ `prod/ap-southeast-1/` ก็จะมี `region.hcl` ของตัวเองที่ประกาศ `aws_region = "ap-southeast-1"` ส่วน unit ไหนก็ตามในทั้ง tree ยังคง share `root.hcl` เดียวกันสำหรับ backend และ provider root เดียวกัน แต่ region ต่างกันในแต่ละ subtree โดยไม่มี unit ไหนต้อง hard-code region ของตัวเองไว้ตรง ๆ เลย
 
 ## inputs: เทียบเท่า tfvars file ของ Terragrunt
 
-ทุกตัวอย่างที่ผ่านมาจบด้วย `inputs = { ... }` block ทั้งนั้น และมันสมควรมีคำอธิบายของตัวเอง นี่คือวิธีที่ unit ส่ง input variable ของ Terraform module ที่อยู่ข้างใต้เข้าไป ทำหน้าที่เหมือน `.tfvars` file ที่ใช้กับ Terraform root module ธรรมดาทุกประการ เพียงแต่เขียนตรง ๆ เป็น Terragrunt HCL แทนที่จะเป็นไฟล์แยกที่ต้องบอก Terraform ให้โหลด แต่ละ key ใน `inputs` แม็พไปที่ `variable` ที่ module ประกาศไว้ และ Terragrunt ส่ง block ทั้งหมดผ่านไปให้ Terraform เป็นค่า `-var` อยู่เบื้องหลัง
+ทุกตัวอย่างที่ผ่านมาจบด้วย `inputs = { ... }` block ทั้งนั้น และสมควรมีคำอธิบายของตัวเอง นี่คือวิธีที่ unit ส่ง input variable ของ Terraform module ที่อยู่ข้างใต้เข้าไป ทำหน้าที่เหมือน `.tfvars` file ที่ใช้กับ Terraform root module ธรรมดาทุกประการ เพียงแต่เขียนตรง ๆ เป็น Terragrunt HCL แทนที่จะเป็นไฟล์แยกที่ต้องบอก Terraform ให้โหลด แต่ละ key ใน `inputs` แม็พไปที่ `variable` ที่ module ประกาศไว้ และ Terragrunt ส่ง block ทั้งหมดผ่านไปให้ Terraform เป็นค่า `-var` อยู่เบื้องหลัง
 
-เพราะ `inputs` คือ HCL จริง ไม่ใช่ `.tfvars` file แบบ static มันจึงอ้างอิงอะไรก็ได้ในไฟล์ config เดียวกัน `local.region_vars.locals.aws_region` ข้างบนคือตัวอย่างหนึ่ง และบทถัดไปจะแนะนำการอ้างอิง output ของ unit อื่นด้วยวิธีเดียวกันนี้
+เพราะ `inputs` คือ HCL จริง ไม่ใช่ `.tfvars` file แบบ static จึงอ้างอิงอะไรก็ได้ในไฟล์ config เดียวกัน `local.region_vars.locals.aws_region` ข้างบนคือตัวอย่างหนึ่ง และบทถัดไปจะแนะนำการอ้างอิง output ของ unit อื่นด้วยวิธีเดียวกันนี้
 
 <Mermaid title="root.hcl กับ region.hcl รวมกันเป็น config ของ unit หนึ่งตัว" code={includeDiagram} />
 
@@ -81,7 +81,7 @@ export const includeDiagram = `flowchart TD
   unit --> inputs["inputs = aws_region, cidr_block"]`;
 
 <Callout title="สรุปหนึ่งบรรทัด">
-`include "root" { path = find_in_parent_folders("root.hcl") }` เดินขึ้น directory tree เพื่อหา root config ที่ share กัน แล้ว merge เข้ามาใน unit ปัจจุบัน ไม่ว่า unit นั้นจะอยู่ลึกแค่ไหนก็ตาม นี่คือสิ่งที่ทำให้ tree ที่มีหลาย unit ยังคง **DRY** ได้ ส่วนการแชร์ค่าที่เล็กกว่าและเฉพาะเจาะจงลงไปแค่บางส่วนของ tree อย่างเช่น region ไฟล์ตัวกลางอย่าง `region.hcl` บวกกับ `locals` และ `read_terragrunt_config(find_in_parent_folders("region.hcl"))` ก็ทำเทคนิค walk-and-merge แบบเดียวกันนี้ลงมาอีกหนึ่งชั้น ส่วน `inputs = { ... }` block ของ unit เองคือของที่เทียบเท่า `.tfvars` file ของ Terragrunt ตรง ๆ และเพราะมันเป็น HCL จริง จึงอ้างอิงค่า `local.*` ที่ดึงมาจากชั้นไหนก็ได้
+`include "root" { path = find_in_parent_folders("root.hcl") }` เดินขึ้น directory tree เพื่อหา root config ที่ share กัน แล้ว merge เข้ามาใน unit ปัจจุบัน ไม่ว่า unit นั้นจะอยู่ลึกแค่ไหนก็ตาม นี่คือสิ่งที่ทำให้ tree ที่มีหลาย unit ยังคง **DRY** ได้ ส่วนการแชร์ค่าที่เล็กกว่าและเฉพาะเจาะจงลงไปแค่บางส่วนของ tree อย่างเช่น region ไฟล์ตัวกลางอย่าง `region.hcl` บวกกับ `locals` และ `read_terragrunt_config(find_in_parent_folders("region.hcl"))` ก็ทำเทคนิค walk-and-merge แบบเดียวกันนี้ลงมาอีกหนึ่งชั้น ส่วน `inputs = { ... }` block ของ unit เองคือของที่เทียบเท่า `.tfvars` file ของ Terragrunt ตรง ๆ และเพราะเป็น HCL จริง จึงอ้างอิงค่า `local.*` ที่ดึงมาจากชั้นไหนก็ได้
 </Callout>
 
 export const quizInclude = [
@@ -89,7 +89,7 @@ export const quizInclude = [
     q: 'include block ที่มี find_in_parent_folders ทำอะไรจริง ๆ',
     options: [
       'copy root.hcl ไปวางเป็นไฟล์จริงใน directory ของ unit',
-      'เดินขึ้น directory tree เพื่อหาไฟล์ที่ระบุชื่อไว้ แล้ว merge config ของมันเข้ากับ unit ปัจจุบัน ไม่ว่าจะอยู่ลึกแค่ไหน',
+      'เดินขึ้น directory tree เพื่อหาไฟล์ที่ระบุชื่อไว้ แล้ว merge config นั้นเข้ากับ unit ปัจจุบัน ไม่ว่าจะอยู่ลึกแค่ไหน',
       'ใช้ได้แค่กรณี unit อยู่ต่ำกว่า root แค่หนึ่งชั้นเท่านั้น',
       'ลบ terragrunt.hcl ของ unit เดิมทิ้งแล้วแทนที่ด้วยอันใหม่',
     ],
@@ -99,7 +99,7 @@ export const quizInclude = [
     q: 'read_terragrunt_config ใช้ทำอะไรกับไฟล์ตัวกลางอย่าง region.hcl',
     options: [
       'apply Terraform module ที่อธิบายไว้ใน region.hcl ตรง ๆ',
-      'parse Terragrunt config ไฟล์อื่น แล้ว expose เนื้อหาของมัน เช่น locals block ให้ unit ปัจจุบันใช้ ทำให้แชร์ค่าลงไปแค่บางส่วนของ tree แทนที่จะเป็นทั้งหมด',
+      'parse Terragrunt config ไฟล์อื่น แล้ว expose เนื้อหา เช่น locals block ให้ unit ปัจจุบันใช้ ทำให้แชร์ค่าลงไปแค่บางส่วนของ tree แทนที่จะเป็นทั้งหมด',
       'generate ไฟล์ backend.tf เหมือนที่ remote_state ทำ',
       'validate ว่า region.hcl ไม่มี syntax error เท่านั้น',
     ],
@@ -118,10 +118,10 @@ export const quizInclude = [
   {
     q: 'ทำไม find_in_parent_folders ยังทำงานได้ปกติหลังจาก unit ถูกย้ายให้ลึกขึ้นไปอยู่ใน subdirectory ใหม่',
     options: [
-      'มันไม่ทำงานต่อ ต้องแก้ include path เองทุกครั้งที่ย้าย',
-      'มันค้นหาไฟล์ที่ระบุชื่อไว้แบบ dynamic ขึ้นไปเรื่อย ๆ แทนที่จะพึ่ง relative path ที่ hard-code ไว้',
+      'ใช้ต่อไม่ได้ ต้องแก้ include path เองทุกครั้งที่ย้าย',
+      'ค้นหาไฟล์ที่ระบุชื่อไว้แบบ dynamic ขึ้นไปเรื่อย ๆ แทนที่จะพึ่ง relative path ที่ hard-code ไว้',
       'Terragrunt cache path เดิมไว้แล้วเพิกเฉยต่อการย้าย',
-      'มันค้นหาแค่ directory ปัจจุบันเท่านั้น การย้าย unit จึงไม่มีผลอะไรเลย',
+      'ค้นหาแค่ directory ปัจจุบันเท่านั้น การย้าย unit จึงไม่มีผลอะไรเลย',
     ],
     answer: 1,
   },

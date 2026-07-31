@@ -1,6 +1,6 @@
 ---
 title: 'Why Terragrunt'
-description: 'ช่องว่างที่ Terraform workspace กับ directory-per-environment ทิ้งไว้ และ Terragrunt ปิดมันได้ยังไงด้วยการห่อ terraform binary จริง'
+description: 'ช่องว่างที่ Terraform workspace กับ directory-per-environment ทิ้งไว้ และ Terragrunt ปิดช่องว่างนั้นได้ยังไงด้วยการห่อ terraform binary จริง'
 sidebar:
   order: 4
 ---
@@ -25,12 +25,12 @@ Terraform เปล่า ๆ ไม่มี primitive ระดับ first-cl
 
 ## Terragrunt คืออะไรจริง ๆ
 
-Terragrunt คือ **wrapper และ orchestrator** บาง ๆ ที่วางอยู่บน setup Terraform (หรือ OpenTofu) ที่มีอยู่แล้ว มันไม่ได้เพิ่ม resource syntax ใหม่ และไม่ได้แทนที่อะไรข้างใน `modules/app` เลย โค้ด module จริงของคุณไม่เปลี่ยนแปลงเลย ยังเป็น Terraform ธรรมดา เหมือนที่เห็นมาในทุกบทก่อนหน้านี้ สิ่งที่ Terragrunt เพิ่มเข้ามาคือ layer ที่อยู่ข้างบนนั้น รับผิดชอบ boilerplate ที่เพิ่งเห็นสะสมอยู่ใน directory-per-environment pattern
+Terragrunt คือ **wrapper และ orchestrator** บาง ๆ ที่วางอยู่บน setup Terraform (หรือ OpenTofu) ที่มีอยู่แล้ว ไม่ได้เพิ่ม resource syntax ใหม่ และไม่ได้แทนที่อะไรข้างใน `modules/app` เลย โค้ด module จริงของคุณไม่เปลี่ยนแปลงเลย ยังเป็น Terraform ธรรมดา เหมือนที่เห็นมาในทุกบทก่อนหน้านี้ สิ่งที่ Terragrunt เพิ่มเข้ามาคือ layer ที่อยู่ข้างบนนั้น รับผิดชอบ boilerplate ที่เพิ่งเห็นสะสมอยู่ใน directory-per-environment pattern
 
 - generate **backend configuration** ของแต่ละ environment จาก definition ศูนย์กลางเดียว แทนที่จะเอา `backend "s3"` block ไปใส่มือในทุก environment directory
 - generate **provider configuration** ของแต่ละ environment ด้วยวิธีเดียวกัน
 - ใส่ **input variable** ของแต่ละ environment ไว้จุดเดียวต่อ environment โดยไม่ต้องทำ boilerplate ของ `module` block รอบ ๆ ซ้ำ
-- เข้าใจ **dependency ordering** เมื่อ infrastructure ถูกแยกเป็นหลาย unit ที่ apply แยกกันอิสระ เช่น unit `vpc` ที่ unit `ec2` ต้องใช้ output จากมัน
+- เข้าใจ **dependency ordering** เมื่อ infrastructure ถูกแยกเป็นหลาย unit ที่ apply แยกกันอิสระ เช่น unit `vpc` ที่ unit `ec2` ต้องใช้ output
 
 Terragrunt unit เล็ก ๆ สำหรับ environment `dev` จากบทที่แล้วหน้าตาเป็นแบบนี้ สังเกตว่า field ของ backend เป็นตัวเดียวกับที่เขียนมือไว้ก่อนหน้านี้เป๊ะ เพียงแต่ตอนนี้ generate มาจาก configuration แทนที่จะ copy-paste
 
@@ -63,9 +63,9 @@ inputs = {
 
 ## สิ่งที่ Terragrunt ไม่ใช่
 
-ตรงนี้ควรพูดให้ชัด เพราะเป็นความเข้าใจผิดที่พบบ่อยที่สุด Terragrunt ไม่ใช่ fork ของ Terraform และไม่ได้ compile configuration ของคุณไปเป็นภาษา infrastructure-as-code แบบอื่น ทุกคำสั่งของ Terragrunt สุดท้ายแล้ว shell out ไปเรียกคำสั่ง `terraform` หรือ `tofu` จริง ๆ ข้างใต้เสมอ รันกับ backend และ provider configuration ตัวเดียวกับที่ Terragrunt เพิ่ง assemble ให้มัน สั่ง `terragrunt plan` แล้วข้างใต้คือ `terraform plan` ธรรมดาที่รันอยู่ หน้าที่ของ Terragrunt จบแค่การ generate input แล้ว orchestrate ว่าคำสั่งจริงนั้นควรรันตอนไหน
+ตรงนี้ควรพูดให้ชัด เพราะเป็นความเข้าใจผิดที่พบบ่อยที่สุด Terragrunt ไม่ใช่ fork ของ Terraform และไม่ได้ compile configuration ของคุณไปเป็นภาษา infrastructure-as-code แบบอื่น ทุกคำสั่งของ Terragrunt สุดท้ายแล้ว shell out ไปเรียกคำสั่ง `terraform` หรือ `tofu` จริง ๆ ข้างใต้เสมอ รันกับ backend และ provider configuration ตัวเดียวกับที่ Terragrunt เพิ่ง assemble ไว้ สั่ง `terragrunt plan` แล้วข้างใต้คือ `terraform plan` ธรรมดาที่รันอยู่ หน้าที่ของ Terragrunt จบแค่การ generate input แล้ว orchestrate ว่าคำสั่งจริงนั้นควรรันตอนไหน
 
-## ปัญหา dependency-ordering ที่มันแก้ได้ด้วย
+## ปัญหา dependency-ordering ที่ Terragrunt แก้ได้ด้วย
 
 Terraform configuration เดียวเข้าใจลำดับ dependency ระหว่าง resource ภายใน state file เดียวอยู่แล้ว ถ้า security group อ้างถึง ID ของ VPC ตัวหนึ่ง Terraform คิดเองได้ว่าต้องสร้าง VPC ก่อน อัตโนมัติ แต่ graph นั้นหยุดอยู่ที่ขอบของ state file เดียว ทันทีที่ infrastructure ถูกแยกเป็นหลาย unit ที่ apply แยกกันอิสระ เช่น unit `vpc` ที่มี state ของตัวเอง กับ unit `ec2` แยกที่มี state ของตัวเองซึ่งต้องใช้ subnet ID ของ VPC ไม่มีอะไรใน `terraform apply` ของแต่ละอันที่รู้เลยว่าอีก unit ต้องรันก่อน เพราะแต่ละอันคือ process คนละตัวที่ทำงานบน state file คนละไฟล์กันเลย
 
@@ -85,7 +85,7 @@ export const terragruntGapDiagram = `flowchart LR
   tg --> tf["Real terraform / tofu binary"]`;
 
 <Callout title="สรุปหนึ่งบรรทัด">
-Terraform workspace แก้ DRY reuse ได้ดีแต่ isolation อ่อนแอ directory-per-environment แก้ isolation ได้ดีแต่พา duplication ของ boilerplate กลับมา Terraform เปล่า ๆ ไม่มี primitive ที่ปิดทั้งสองช่องว่างพร้อมกัน **Terragrunt** คือ wrapper และ orchestrator บาง ๆ ไม่ใช่ fork ของ Terraform และไม่ใช่ภาษา IaC ใหม่ ที่ generate backend, provider, และ input configuration จาก definition ศูนย์กลางเดียวแทนที่จะ copy-paste boilerplate และทุกคำสั่งของ Terragrunt สุดท้าย shell out ไปเรียกคำสั่ง `terraform`/`tofu` จริงข้างใต้เสมอ มันยังเข้าใจ **dependency ordering** ข้าม unit หลายตัวที่ apply แยกกันอิสระด้วย state file คนละไฟล์ เช่น unit `vpc` ที่ unit `ec2` ต้องพึ่งพา ซึ่ง graph ภายในของ Terraform configuration เดียวมองไม่เห็นข้าม เพราะ graph นั้นหยุดที่ขอบของ state file เดียว
+Terraform workspace แก้ DRY reuse ได้ดีแต่ isolation อ่อนแอ directory-per-environment แก้ isolation ได้ดีแต่พา duplication ของ boilerplate กลับมา Terraform เปล่า ๆ ไม่มี primitive ที่ปิดทั้งสองช่องว่างพร้อมกัน **Terragrunt** คือ wrapper และ orchestrator บาง ๆ ไม่ใช่ fork ของ Terraform และไม่ใช่ภาษา IaC ใหม่ ที่ generate backend, provider, และ input configuration จาก definition ศูนย์กลางเดียวแทนที่จะ copy-paste boilerplate และทุกคำสั่งของ Terragrunt สุดท้าย shell out ไปเรียกคำสั่ง `terraform`/`tofu` จริงข้างใต้เสมอ Terragrunt ยังเข้าใจ **dependency ordering** ข้าม unit หลายตัวที่ apply แยกกันอิสระด้วย state file คนละไฟล์ เช่น unit `vpc` ที่ unit `ec2` ต้องพึ่งพา ซึ่ง graph ภายในของ Terraform configuration เดียวมองไม่เห็นข้าม เพราะ graph นั้นหยุดที่ขอบของ state file เดียว
 </Callout>
 
 export const quizWhyTerragrunt = [
@@ -110,7 +110,7 @@ export const quizWhyTerragrunt = [
     answer: 1,
   },
   {
-    q: 'Terragrunt มักถูกเข้าใจผิดว่าเป็นอะไร ทั้งที่จริง ๆ แล้วมันไม่ใช่',
+    q: 'Terragrunt มักถูกเข้าใจผิดว่าเป็นอะไร ทั้งที่จริง ๆ แล้วไม่ใช่',
     options: [
       'linter สำหรับ error ของ HCL syntax',
       'ภาษา infrastructure-as-code ใหม่ หรือ fork/ตัวแทนของ Terraform ทั้งที่จริง ๆ ทุกคำสั่ง shell out ไปเรียกคำสั่ง terraform/tofu จริงข้างใต้เสมอ',
@@ -123,7 +123,7 @@ export const quizWhyTerragrunt = [
     q: 'Terragrunt แก้ปัญหาแบบไหนที่ dependency graph ภายในของ Terraform configuration เดียวแก้ไม่ได้',
     options: [
       'จัด format โค้ด HCL ให้เหมือนกันทั้งทีม',
-      'จัดลำดับ apply ข้าม unit หลายตัวที่ apply แยกกันอิสระด้วย state file คนละไฟล์ เช่น unit vpc ที่ unit ec2 ต้องใช้ output จากมัน เพราะ graph ของ configuration เดียวมองเห็นแค่ dependency ภายใน state file ของตัวเองเท่านั้น',
+      'จัดลำดับ apply ข้าม unit หลายตัวที่ apply แยกกันอิสระด้วย state file คนละไฟล์ เช่น unit vpc ที่ unit ec2 ต้องใช้ output เพราะ graph ของ configuration เดียวมองเห็นแค่ dependency ภายใน state file ของตัวเองเท่านั้น',
       'เข้ารหัส state file ตอนเก็บไว้',
       'แก้ conflict ของ provider version ให้อัตโนมัติ',
     ],

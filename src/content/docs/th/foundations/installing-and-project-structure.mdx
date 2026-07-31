@@ -12,13 +12,13 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 ## ไอเดียในหนึ่งประโยค
 
-ติดตั้ง Terraform ผ่าน version manager แทนการใช้ binary ตัวเดียวที่ pin ตายตัว เขียน resource แรกที่เป็น AWS จริง แล้วแยกมันออกเป็นไฟล์หลายไฟล์ตามชื่อที่เป็น convention — ซึ่งไม่มีตัวไหนที่ Terraform บังคับจริง ๆ
+ติดตั้ง Terraform ผ่าน version manager แทนการใช้ binary ตัวเดียวที่ pin ตายตัว เขียน resource แรกที่เป็น AWS จริง แล้วแยกออกเป็นไฟล์หลายไฟล์ตามชื่อที่เป็น convention — ซึ่งไม่มีตัวไหนที่ Terraform บังคับจริง ๆ
 
 ## ติดตั้ง Terraform (และทำไม version manager ถึงดีกว่า binary เดี่ยว)
 
 คุณดาวน์โหลด Terraform binary ตัวเดียวจาก HashiCorp แล้ววางไว้ใน `PATH` ได้ และวิธีนี้ก็ใช้งานได้ดีถ้าทำ experiment คนเดียว แต่พอทำงานมากกว่าหนึ่งโปรเจกต์ วิธีนี้จะเริ่มมีปัญหา repository หนึ่งเขียนไว้สำหรับ Terraform 1.5 อีกอันต้องใช้ฟีเจอร์ของ 1.9 และอีกอันก็ migrate ไปใช้ OpenTofu แล้ว การคอยสลับ binary ตัวเดียวให้ตรงกับโปรเจกต์ที่คุณอยู่ตอนนั้นคืองานที่ต้องทำตลอดและผิดพลาดได้ง่าย
 
-**Version manager** แก้ปัญหานี้ด้วยการติดตั้งหลายเวอร์ชันไว้พร้อมกัน แล้วสลับใช้ตามโปรเจกต์ ส่วนใหญ่อ้างอิงจากไฟล์บอกเวอร์ชันที่ commit ไว้ใน repository **tenv** เป็นตัวเลือกที่ดีเพราะมันไม่ได้ผูกกับเครื่องมือตัวเดียว มันจัดการเวอร์ชันของ Terraform, OpenTofu, Terragrunt และ Atmos ทั้งหมดจาก CLI ตัวเดียว ซึ่งสำคัญมากเมื่อทีมของคุณรัน Terragrunt คู่กับ Terraform (จะพูดถึงในคอร์สนี้ช่วงหลัง)
+**Version manager** แก้ปัญหานี้ด้วยการติดตั้งหลายเวอร์ชันไว้พร้อมกัน แล้วสลับใช้ตามโปรเจกต์ ส่วนใหญ่อ้างอิงจากไฟล์บอกเวอร์ชันที่ commit ไว้ใน repository **tenv** เป็นตัวเลือกที่ดีเพราะไม่ได้ผูกกับเครื่องมือตัวเดียว จัดการเวอร์ชันของ Terraform, OpenTofu, Terragrunt และ Atmos ทั้งหมดจาก CLI ตัวเดียว ซึ่งสำคัญมากเมื่อทีมของคุณรัน Terragrunt คู่กับ Terraform (จะพูดถึงในคอร์สนี้ช่วงหลัง)
 
 ```bash
 # install tenv (macOS, via Homebrew)
@@ -60,7 +60,7 @@ resource "aws_s3_bucket" "reports" {
 }
 ```
 
-นั่นคือ configuration ที่สมบูรณ์และ apply ได้จริง ไม่มี VPC ไม่มีเรื่อง networking ไม่มี prerequisite อะไรนอกจาก AWS credential ใน environment ของคุณ `aws_s3_bucket` เป็น resource แรกที่ดีด้วยเหตุผลนี้เป๊ะ ๆ คือมันไม่ต้องพึ่งอะไรให้มีอยู่ก่อน
+นั่นคือ configuration ที่สมบูรณ์และ apply ได้จริง ไม่มี VPC ไม่มีเรื่อง networking ไม่มี prerequisite อะไรนอกจาก AWS credential ใน environment ของคุณ `aws_s3_bucket` เป็น resource แรกที่ดีด้วยเหตุผลนี้เป๊ะ ๆ คือไม่ต้องพึ่งอะไรให้มีอยู่ก่อน
 
 ## Conventional file layout
 
@@ -108,7 +108,7 @@ output "bucket_arn" {
 }
 ```
 
-ชื่อ `main.tf`, `variables.tf`, `outputs.tf`, `providers.tf` และ `versions.tf` เป็น **convention ไม่ใช่ข้อบังคับของ Terraform** Terraform ไม่ได้สนใจชื่อไฟล์เลยแม้แต่น้อย มันโหลดทุกไฟล์ `.tf` ในไดเรกทอรี รวมเข้าเป็น configuration เดียว และไม่สนว่าคุณตั้งชื่อไฟล์ว่า `main.tf`, `zzz.tf` หรือ `whatever.tf` resource ใน `outputs.tf` กับ variable ที่มันอ้างอิงใน `main.tf` ทำงานเหมือนกันทุกอย่างกับตอนที่ทุกอย่างอยู่ในไฟล์เดียว Terraform สร้าง dependency graph เดียวกันไม่ว่าจะแยกไฟล์แบบไหน การแยกตาม concern (provider, variable, resource, output) มีไว้เพื่อให้คนที่เปิดไดเรกทอรีรู้ว่าต้องไปดูตรงไหนเท่านั้น ไม่ใช่เพราะ Terraform ต้องการเส้นแบ่งนั้น
+ชื่อ `main.tf`, `variables.tf`, `outputs.tf`, `providers.tf` และ `versions.tf` เป็น **convention ไม่ใช่ข้อบังคับของ Terraform** Terraform ไม่ได้สนใจชื่อไฟล์เลยแม้แต่น้อย แต่โหลดทุกไฟล์ `.tf` ในไดเรกทอรี รวมเข้าเป็น configuration เดียว และไม่สนว่าคุณตั้งชื่อไฟล์ว่า `main.tf`, `zzz.tf` หรือ `whatever.tf` resource ใน `outputs.tf` กับ variable ที่อ้างอิงใน `main.tf` ทำงานเหมือนกันทุกอย่างกับตอนที่ทุกอย่างอยู่ในไฟล์เดียว Terraform สร้าง dependency graph เดียวกันไม่ว่าจะแยกไฟล์แบบไหน การแยกตาม concern (provider, variable, resource, output) มีไว้เพื่อให้คนที่เปิดไดเรกทอรีรู้ว่าต้องไปดูตรงไหนเท่านั้น ไม่ใช่เพราะ Terraform ต้องการเส้นแบ่งนั้น
 
 <Mermaid title="Terraform loads every .tf file in a directory into one combined configuration" code={installDiagram} />
 
@@ -130,13 +130,13 @@ export const installDiagram = `flowchart TB
 
 มีสองคำสั่งที่ควรรันก่อน commit ทุกครั้ง และรันบ่อยแค่ไหนก็ไม่มีต้นทุนอะไร
 
-`terraform fmt` เขียนไฟล์ทับในที่เดิมให้เป็น canonical formatting ของ Terraform คือ indentation สม่ำเสมอ เครื่องหมาย `=` เรียงตรงกัน spacing สม่ำเสมอ มันแก้แค่ style ไม่ได้แก้ logic
+`terraform fmt` เขียนไฟล์ทับในที่เดิมให้เป็น canonical formatting ของ Terraform คือ indentation สม่ำเสมอ เครื่องหมาย `=` เรียงตรงกัน spacing สม่ำเสมอ แก้แค่ style ไม่ได้แก้ logic
 
 ```bash
 terraform fmt
 ```
 
-`terraform validate` ตรวจว่า configuration สอดคล้องกันภายในตัวเอง คือ HCL syntax ถูกต้อง argument type ถูกต้อง variable ที่อ้างอิงมีอยู่จริง มันจับ typo และความผิดพลาดเชิงโครงสร้างได้ก่อนที่จะติดต่อ AWS ด้วยซ้ำ
+`terraform validate` ตรวจว่า configuration สอดคล้องกันภายในตัวเอง คือ HCL syntax ถูกต้อง argument type ถูกต้อง variable ที่อ้างอิงมีอยู่จริง จับ typo และความผิดพลาดเชิงโครงสร้างได้ก่อนที่จะติดต่อ AWS ด้วยซ้ำ
 
 ```bash
 terraform validate
@@ -146,10 +146,10 @@ terraform validate
 Success! The configuration is valid.
 ```
 
-สิ่งที่ `validate` **ไม่ทำ** คือตรวจอะไรก็ตามกับ AWS API จริง มันไม่รู้ว่า account ของคุณชน service quota หรือเปล่า ชื่อ bucket ที่คุณเลือกถูกใช้ไปแล้วทั่วโลกหรือเปล่า หรือ IAM credential ของคุณมีสิทธิ์สร้างมันจริงหรือเปล่า ทั้งหมดนี้จะโผล่มาก็ต่อเมื่อคุณรัน `terraform plan` ซึ่งเป็นคำสั่งแรกที่ติดต่อกับ AWS จริง ๆ configuration หนึ่งอาจผ่าน `validate` แบบไม่มีปัญหา แล้วยังพังตอน `plan` หรือ `apply` ได้
+สิ่งที่ `validate` **ไม่ทำ** คือตรวจอะไรก็ตามกับ AWS API จริง validate ไม่รู้ว่า account ของคุณชน service quota หรือเปล่า ชื่อ bucket ที่คุณเลือกถูกใช้ไปแล้วทั่วโลกหรือเปล่า หรือ IAM credential ของคุณมีสิทธิ์สร้างจริงหรือเปล่า ทั้งหมดนี้จะโผล่มาก็ต่อเมื่อคุณรัน `terraform plan` เพราะเป็นคำสั่งแรกที่ติดต่อกับ AWS จริง ๆ configuration หนึ่งอาจผ่าน `validate` แบบไม่มีปัญหา แล้วยังพังตอน `plan` หรือ `apply` ได้
 
 <Callout title="สรุปหนึ่งบรรทัด">
-ติดตั้ง Terraform ผ่าน **version manager** อย่าง `tenv` (ซึ่งจัดการ OpenTofu กับ Terragrunt ได้ด้วย) แทนการใช้ binary ตัวเดียวที่ pin ตายตัว โปรเจกต์จริงขั้นต่ำสุดคือแค่ `provider` block บวก resource หนึ่งตัวอย่าง `aws_s3_bucket` การแยกไฟล์เป็น `main.tf` / `variables.tf` / `outputs.tf` / `providers.tf` / `versions.tf` คือ **convention ของคน** — Terraform โหลดทุกไฟล์ `.tf` ในไดเรกทอรีเป็น configuration เดียวไม่ว่าจะตั้งชื่อไฟล์ว่าอะไร และ `terraform fmt` (canonical formatting) กับ `terraform validate` (ตรวจ syntax และความสอดคล้องภายใน) เป็นนิสัยวันแรกที่ต้นทุนต่ำและคุ้มค่า — แต่ `validate` ไม่เคยติดต่อ AWS API จริง มันจึงจับ quota limit, ชื่อ bucket ที่ถูกใช้ไปแล้ว หรือ permission ที่ขาดไม่ได้ ซึ่งเป็นหน้าที่ของ `plan`
+ติดตั้ง Terraform ผ่าน **version manager** อย่าง `tenv` (ที่จัดการ OpenTofu กับ Terragrunt ได้ด้วย) แทนการใช้ binary ตัวเดียวที่ pin ตายตัว โปรเจกต์จริงขั้นต่ำสุดคือแค่ `provider` block บวก resource หนึ่งตัวอย่าง `aws_s3_bucket` การแยกไฟล์เป็น `main.tf` / `variables.tf` / `outputs.tf` / `providers.tf` / `versions.tf` คือ **convention ของคน** — Terraform โหลดทุกไฟล์ `.tf` ในไดเรกทอรีเป็น configuration เดียวไม่ว่าจะตั้งชื่อไฟล์ว่าอะไร และ `terraform fmt` (canonical formatting) กับ `terraform validate` (ตรวจ syntax และความสอดคล้องภายใน) เป็นนิสัยวันแรกที่ต้นทุนต่ำและคุ้มค่า — แต่ `validate` ไม่เคยติดต่อ AWS API จริง จึงจับ quota limit, ชื่อ bucket ที่ถูกใช้ไปแล้ว หรือ permission ที่ขาดไม่ได้ นั่นคือหน้าที่ของ `plan`
 </Callout>
 
 export const quizInstall = [

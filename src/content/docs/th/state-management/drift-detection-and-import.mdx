@@ -1,6 +1,6 @@
 ---
 title: 'Drift Detection and Import'
-description: 'Terraform เปิดโปงการเปลี่ยนแปลงที่เกิดนอกการควบคุมของมันยังไง และวิธีเอา AWS resource ที่มีอยู่แล้วเข้ามาอยู่ใต้การจัดการของ Terraform ด้วย import'
+description: 'Terraform เปิดโปงการเปลี่ยนแปลงที่เกิดนอกการควบคุมของตัวเองยังไง และวิธีเอา AWS resource ที่มีอยู่แล้วเข้ามาอยู่ใต้การจัดการของ Terraform ด้วย import'
 sidebar:
   order: 3
 ---
@@ -16,7 +16,7 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 ## การตรวจจับ drift
 
-state เป็นแค่ snapshot ที่บันทึกไว้ ณ ตอน `apply` ครั้งล่าสุดเท่านั้น ไม่มีอะไรกันไม่ให้ใครเปิด AWS Console แล้วแก้ resource ตรง ๆ เช่นแก้ tag ของ EC2 instance เปลี่ยนขนาด RDS instance หรือเปิด port บน security group ด้วยมือ Terraform ไม่มีทางรู้เรื่องนี้จนกว่ามันจะไปดูใหม่อีกครั้ง
+state เป็นแค่ snapshot ที่บันทึกไว้ ณ ตอน `apply` ครั้งล่าสุดเท่านั้น ไม่มีอะไรกันไม่ให้ใครเปิด AWS Console แล้วแก้ resource ตรง ๆ เช่นแก้ tag ของ EC2 instance เปลี่ยนขนาด RDS instance หรือเปิด port บน security group ด้วยมือ Terraform ไม่มีทางรู้เรื่องนี้จนกว่าจะไปดูใหม่อีกครั้ง
 
 ```hcl
 resource "aws_instance" "web" {
@@ -29,7 +29,7 @@ resource "aws_instance" "web" {
 }
 ```
 
-สมมติเพื่อนร่วมทีมแก้ tag `Name` ของ instance นั้นใน console เป็น `"web-server-old"` โดยไม่ผ่าน Terraform run ใด ๆ เลย ครั้งถัดไปที่ใครก็ตามรัน `terraform plan` Terraform จะ refresh มุมมองของ resource จริง สังเกตว่า tag ไม่ตรงกับ configuration แล้ว แล้วแสดง diff ออกมา — มันเสนอให้เปลี่ยน tag กลับเป็น `"web-server"` เพราะสำหรับ Terraform แล้ว configuration คือ source of truth และการแก้ผ่าน console คือ drift ที่ต้องแก้ไขให้ตรงกัน
+สมมติเพื่อนร่วมทีมแก้ tag `Name` ของ instance นั้นใน console เป็น `"web-server-old"` โดยไม่ผ่าน Terraform run ใด ๆ เลย ครั้งถัดไปที่ใครก็ตามรัน `terraform plan` Terraform จะ refresh มุมมองของ resource จริง สังเกตว่า tag ไม่ตรงกับ configuration แล้ว แล้วแสดง diff ออกมา — โดยเสนอให้เปลี่ยน tag กลับเป็น `"web-server"` เพราะสำหรับ Terraform แล้ว configuration คือ source of truth และการแก้ผ่าน console คือ drift ที่ต้องแก้ไขให้ตรงกัน
 
 ```bash
 terraform plan
@@ -47,17 +47,17 @@ terraform plan
 terraform apply -refresh-only
 ```
 
-โหมดนี้ refresh state จาก AWS resource จริง แล้วแสดงให้ดูว่าอะไรเปลี่ยนไป จากนั้นถามให้ยืนยันก่อนเขียนการเปลี่ยนแปลงนั้นลง `terraform.tfstate` — แต่มันไม่แก้ AWS จริงเด็ดขาด นี่คือเครื่องมือที่ถูกต้องเวลา drift เกิดขึ้นโดยตั้งใจ และคุณตัดสินใจแล้วว่าจะให้การแก้ผ่าน console ชนะ หรือเวลาที่คุณต้อง update ความเข้าใจว่า state ตอนนี้เก็บอะไรอยู่ ก่อนจะตัดสินใจว่าจะแก้ configuration หรือยอมรับของจริง
+โหมดนี้ refresh state จาก AWS resource จริง แล้วแสดงให้ดูว่าอะไรเปลี่ยนไป จากนั้นถามให้ยืนยันก่อนเขียนการเปลี่ยนแปลงนั้นลง `terraform.tfstate` — แต่ไม่แก้ AWS จริงเด็ดขาด นี่คือเครื่องมือที่ถูกต้องเวลา drift เกิดขึ้นโดยตั้งใจ และคุณตัดสินใจแล้วว่าจะให้การแก้ผ่าน console ชนะ หรือเวลาที่คุณต้อง update ความเข้าใจว่า state ตอนนี้เก็บอะไรอยู่ ก่อนจะตัดสินใจว่าจะแก้ configuration หรือยอมรับของจริง
 
 ## การเอา resource ที่มีอยู่แล้วเข้ามาอยู่ใต้การจัดการ
 
-drift สมมติว่า Terraform จัดการ resource นั้นอยู่แล้ว แต่มีอีกปัญหาที่เกี่ยวกันคือ resource ที่มีอยู่จริงบน AWS แต่ไม่เคยถูก Terraform สร้างเลย — อาจมีมาก่อนที่ทีมจะเริ่มใช้ Terraform หรือมีใครคลิกสร้างมันผ่าน console ตอนเกิด outage `terraform import` คือคำสั่ง CLI ที่เชื่อม resource จริงตัวนั้นเข้ากับ resource address ใน configuration ของคุณ
+drift สมมติว่า Terraform จัดการ resource นั้นอยู่แล้ว แต่มีอีกปัญหาที่เกี่ยวกันคือ resource ที่มีอยู่จริงบน AWS แต่ไม่เคยถูก Terraform สร้างเลย — อาจมีมาก่อนที่ทีมจะเริ่มใช้ Terraform หรือมีใครคลิกสร้างผ่าน console ตอนเกิด outage `terraform import` คือคำสั่ง CLI ที่เชื่อม resource จริงตัวนั้นเข้ากับ resource address ใน configuration ของคุณ
 
 ```bash
 terraform import aws_instance.web i-0123456789abcdef0
 ```
 
-การรัน import แค่เขียน state entry เท่านั้น — มันแมป `aws_instance.web` เข้ากับ instance ID จริง แล้วดึง attribute ปัจจุบันทั้งหมดของ instance นั้นเข้ามา มัน **ไม่** เขียน `resource "aws_instance" "web" { ... }` block ให้คุณ คุณยังต้องเขียน HCL เองให้ attribute ตรงกับของจริงมากพอ จนกว่า `plan` ครั้งถัดไปจะออกมาสะอาด ถ้า configuration ของคุณไม่ตรงกับของจริงหลัง import แล้ว `plan` จะแสดง diff แบบเดียวกับที่ drift ทำ และคุณต้องแก้ HCL — ไม่ใช่แก้ resource จริง — จนทั้งสองตรงกัน
+การรัน import แค่เขียน state entry เท่านั้น — โดยแมป `aws_instance.web` เข้ากับ instance ID จริง แล้วดึง attribute ปัจจุบันทั้งหมดของ instance นั้นเข้ามา คำสั่งนี้ **ไม่** เขียน `resource "aws_instance" "web" { ... }` block ให้คุณ คุณยังต้องเขียน HCL เองให้ attribute ตรงกับของจริงมากพอ จนกว่า `plan` ครั้งถัดไปจะออกมาสะอาด ถ้า configuration ของคุณไม่ตรงกับของจริงหลัง import แล้ว `plan` จะแสดง diff แบบเดียวกับที่ drift ทำ และคุณต้องแก้ HCL — ไม่ใช่แก้ resource จริง — จนทั้งสองตรงกัน
 
 ## import block แบบ declarative
 
@@ -70,7 +70,7 @@ import {
 }
 ```
 
-มันทำหน้าที่เดียวกับ `terraform import` ข้างใต้ แต่ต่างกันตรง workflow ที่สำคัญ คำสั่ง CLI รันทันทีและแก้ state ตั้งแต่วินาทีที่คุณสั่ง — ไม่มี preview และไม่มีอะไรให้ review ก่อนมันเกิดขึ้น ส่วน `import` block เป็นแค่ configuration — มันจะโผล่เป็น action ที่วางแผนไว้ในครั้งถัดไปที่คุณรัน `terraform plan` เคียงข้างกับ change อื่น ๆ ก่อนที่อะไรจะเกิดขึ้นจริง
+ข้างใต้ทำหน้าที่เดียวกับ `terraform import` แต่ต่างกันตรง workflow ที่สำคัญ คำสั่ง CLI รันทันทีและแก้ state ตั้งแต่วินาทีที่คุณสั่ง — ไม่มี preview และไม่มีอะไรให้ review ก่อนเกิดขึ้น ส่วน `import` block เป็นแค่ configuration ที่จะโผล่เป็น action ที่วางแผนไว้ในครั้งถัดไปที่คุณรัน `terraform plan` เคียงข้างกับ change อื่น ๆ ก่อนที่อะไรจะเกิดขึ้นจริง
 
 ```bash
 terraform plan
@@ -85,7 +85,7 @@ terraform plan
 #     }
 ```
 
-นั่นทำให้ `import` block เป็นวิธีที่แนะนำเมื่อใช้ได้ — มัน plan ได้ review ได้ใน pull request เหมือน configuration change อื่น ๆ และทำซ้ำข้าม environment ได้ แทนที่จะเป็น side effect ที่เกิดทันทีซึ่งต้องมีใครจำไว้คอยรันมือบนทุกเครื่องที่ต้องการ คุณยังต้องเขียน `resource` block ที่ตรงกันเองอยู่ดีไม่ว่าจะใช้วิธีไหน — block นี้แค่บอก Terraform ว่าจะเชื่อม object จริงตัวไหนเข้ากับ address ไหน
+นั่นทำให้ `import` block เป็นวิธีที่แนะนำเมื่อใช้ได้ — เพราะ plan ได้ review ได้ใน pull request เหมือน configuration change อื่น ๆ และทำซ้ำข้าม environment ได้ แทนที่จะเป็น side effect ที่เกิดทันทีซึ่งต้องมีใครจำไว้คอยรันมือบนทุกเครื่องที่ต้องการ คุณยังต้องเขียน `resource` block ที่ตรงกันเองอยู่ดีไม่ว่าจะใช้วิธีไหน — block นี้แค่บอก Terraform ว่าจะเชื่อม object จริงตัวไหนเข้ากับ address ไหน
 
 ## จัดระเบียบ state โดยไม่แตะ infrastructure จริง
 
@@ -99,7 +99,7 @@ terraform state mv aws_instance.web module.compute.aws_instance.web
 terraform state rm aws_instance.web
 ```
 
-`terraform state mv` คือคำสั่งที่ใช้เวลาปรับโครงสร้าง configuration ใหม่ — เช่นย้าย resource เข้าไปอยู่ใน module — แล้วไม่อยากให้ Terraform มองว่าเป็น "ลบตัวเก่า สร้างตัวใหม่" มันแค่ update address ใน state ให้ตรงกับตำแหน่งใหม่ใน HCL และ resource จริงบน AWS ไม่ถูกแตะเลย `terraform state rm` คือทิศตรงข้ามของ `import` — มันลบ entry ของ resource ออกจาก state ทำให้ Terraform ลืมมันไปเลย แต่ object จริงบน AWS ยังทำงานต่อเหมือนเดิมทุกอย่าง มีประโยชน์เวลาอยากส่งต่อ resource ให้ Terraform configuration อื่นดูแล หรือตั้งใจหยุดจัดการอะไรบางอย่างโดยไม่ลบมันทิ้ง
+`terraform state mv` คือคำสั่งที่ใช้เวลาปรับโครงสร้าง configuration ใหม่ — เช่นย้าย resource เข้าไปอยู่ใน module — แล้วไม่อยากให้ Terraform มองว่าเป็น "ลบตัวเก่า สร้างตัวใหม่" แค่ update address ใน state ให้ตรงกับตำแหน่งใหม่ใน HCL และ resource จริงบน AWS ไม่ถูกแตะเลย `terraform state rm` คือทิศตรงข้ามของ `import` — โดยลบ entry ของ resource ออกจาก state ทำให้ Terraform ลืมไปเลย แต่ object จริงบน AWS ยังทำงานต่อเหมือนเดิมทุกอย่าง มีประโยชน์เวลาอยากส่งต่อ resource ให้ Terraform configuration อื่นดูแล หรือตั้งใจหยุดจัดการอะไรบางอย่างโดยไม่ลบทิ้ง
 
 <Mermaid title="A manual console edit is caught as drift by plan, while an existing untracked resource is brought in via import" code={driftImportDiagram} />
 
@@ -110,7 +110,7 @@ export const driftImportDiagram = `flowchart LR
   state -->|next plan| clean["plan shows no diff, if config matches"]`;
 
 <Callout title="สรุปหนึ่งบรรทัด">
-**configuration drift** คือช่องว่างระหว่าง configuration ของ Terraform กับสภาพจริงบน AWS ที่เกิดจากการเปลี่ยนแปลงนอก Terraform — `terraform plan` เปิดโปงมันเป็น diff และ `terraform apply -refresh-only` ให้คุณ update state ที่บันทึกไว้ให้ตรงกับของจริง โดยไม่แตะ infrastructure จริงเลย **`terraform import`** (คำสั่ง CLI) เชื่อม resource ที่มีอยู่แล้วและสร้างด้วยมือเข้ากับ resource address ที่คุณเขียนไว้ใน config แล้ว แต่มันแค่เติม state entry เท่านั้น — คุณยังต้องเขียน `resource` block ที่ตรงกันเอง **`import` block** ที่ใหม่กว่า (Terraform 1.5 ขึ้นไป) ทำงานเดียวกันแบบ declarative ในไฟล์ `.tf` และเป็นที่แนะนำเมื่อใช้ได้ เพราะมัน plan ได้ review ได้ใน `terraform plan` ก่อนมันเกิดขึ้นจริง แทนที่จะเป็น CLI side effect ที่เกิดทันทีโดยไม่มีใคร review `terraform state mv` และ `terraform state rm` จัดระเบียบหรือหยุด track resource ใน state โดยไม่แตะ infrastructure จริงเลย
+**configuration drift** คือช่องว่างระหว่าง configuration ของ Terraform กับสภาพจริงบน AWS ที่เกิดจากการเปลี่ยนแปลงนอก Terraform — `terraform plan` เปิดโปงออกมาเป็น diff และ `terraform apply -refresh-only` ให้คุณ update state ที่บันทึกไว้ให้ตรงกับของจริง โดยไม่แตะ infrastructure จริงเลย **`terraform import`** (คำสั่ง CLI) เชื่อม resource ที่มีอยู่แล้วและสร้างด้วยมือเข้ากับ resource address ที่คุณเขียนไว้ใน config แล้ว แต่แค่เติม state entry เท่านั้น — คุณยังต้องเขียน `resource` block ที่ตรงกันเอง **`import` block** ที่ใหม่กว่า (Terraform 1.5 ขึ้นไป) ทำงานเดียวกันแบบ declarative ในไฟล์ `.tf` และเป็นที่แนะนำเมื่อใช้ได้ เพราะ plan ได้ review ได้ใน `terraform plan` ก่อนเกิดขึ้นจริง แทนที่จะเป็น CLI side effect ที่เกิดทันทีโดยไม่มีใคร review `terraform state mv` และ `terraform state rm` จัดระเบียบหรือหยุด track resource ใน state โดยไม่แตะ infrastructure จริงเลย
 </Callout>
 
 export const quizDriftImport = [
@@ -138,17 +138,17 @@ export const quizDriftImport = [
     q: 'ทำไม import block แบบ declarative มักถูกเลือกใช้มากกว่าการรันคำสั่ง CLI terraform import',
     options: [
       'import block เขียน resource block ที่ตรงกันให้อัตโนมัติ ซึ่ง CLI ทำไม่ได้',
-      'import block โผล่เป็น action ที่วางแผนไว้ใน terraform plan และ review ได้ก่อนอะไรจะเกิดขึ้น ในขณะที่ CLI แก้ state ทันทีโดยไม่มี preview',
+      'import block โผล่เป็น action ที่วางแผนไว้ใน terraform plan และ review ได้ก่อนอะไรจะเกิดขึ้น ส่วน CLI แก้ state ทันทีโดยไม่มี preview',
       'import block ใช้ได้กับ Terraform เวอร์ชันเก่าที่ CLI ใช้ไม่ได้',
       'ไม่มีความต่างกันเลย ทั้งสองคือชื่อเรียกอื่นของ operation เดียวกัน',
     ],
     answer: 1,
   },
   {
-    q: 'terraform state rm ทำอะไรกับ AWS resource จริงที่มันเคย track อยู่',
+    q: 'terraform state rm ทำอะไรกับ AWS resource จริงที่เคย track อยู่',
     options: [
       'ลบ resource จริงใน AWS ทิ้ง',
-      'ไม่ทำอะไรเลย มันแค่ลบ entry ของ resource ออกจาก state ทำให้ Terraform เลิก track ส่วน object จริงยังทำงานต่อเหมือนเดิม',
+      'ไม่ทำอะไรเลย แค่ลบ entry ของ resource ออกจาก state ทำให้ Terraform เลิก track ส่วน object จริงยังทำงานต่อเหมือนเดิม',
       'หยุด resource ไว้แต่ไม่ลบ',
       'export configuration ของ resource ไปเป็นไฟล์ .tf ใหม่ให้อัตโนมัติ',
     ],

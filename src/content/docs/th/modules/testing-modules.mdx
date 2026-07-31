@@ -10,19 +10,19 @@ import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
-## The idea in one sentence
+## ไอเดียในหนึ่งประโยค
 
 `terraform validate`, `terraform plan` และ `terraform test` แต่ละตัวจับความผิดพลาดคนละประเภทกันโดยสิ้นเชิง การผ่านตัวใดตัวหนึ่งไม่ได้บอกอะไรเลยว่าตัวอื่นจะผ่านด้วย
 
 ## สามระดับความมั่นใจที่แตกต่างกัน
 
-มันน่าเผลอมองว่า `validate`, `plan` และ `test` เป็นวิธีตรวจสอบว่า module "ทำงานหรือไม่" ที่ใช้แทนกันได้ แต่จริง ๆ แล้วไม่ใช่ — แต่ละตัวคุยกับ reality คนละชั้น
+น่าเผลอมองว่า `validate`, `plan` และ `test` เป็นวิธีตรวจสอบว่า module "ทำงานหรือไม่" ที่ใช้แทนกันได้ แต่จริง ๆ แล้วไม่ใช่ — แต่ละตัวคุยกับ reality คนละชั้น
 
-`terraform validate` ตรวจแค่ syntax ของ HCL กับความสอดคล้องภายใน configuration เท่านั้น เช่น block เขียนถูกต้องหรือไม่ variable และ resource ที่อ้างอิงมีอยู่จริงหรือไม่ type ตรงกันหรือไม่ ที่สำคัญคือมันไม่คุยกับ AWS เลยแม้แต่นิดเดียว module หนึ่งอาจผ่าน `validate` แบบเนียน ๆ แล้วพังทันทีที่ไปแตะ AWS account จริง เพราะ `validate` ไม่มีทางรู้เลยว่า IAM permission ของคุณ, service quota ของ account หรือ AWS API เห็นด้วยกับสิ่งที่คุณเขียนหรือไม่
+`terraform validate` ตรวจแค่ syntax ของ HCL กับความสอดคล้องภายใน configuration เท่านั้น เช่น block เขียนถูกต้องหรือไม่ variable และ resource ที่อ้างอิงมีอยู่จริงหรือไม่ type ตรงกันหรือไม่ ที่สำคัญคือไม่คุยกับ AWS เลยแม้แต่นิดเดียว module หนึ่งอาจผ่าน `validate` แบบเนียน ๆ แล้วพังทันทีที่ไปแตะ AWS account จริง เพราะ `validate` ไม่มีทางรู้เลยว่า IAM permission ของคุณ, service quota ของ account หรือ AWS API เห็นด้วยกับสิ่งที่คุณเขียนหรือไม่
 
-`terraform plan` ปิดช่องว่างนี้ด้วยการคุยกับ AWS API จริง มันจับ error ฝั่ง provider ได้ — AMI ID พิมพ์ผิด, region ที่ resource type นั้นไม่รองรับ, permission ที่ credential ของคุณไม่มี — และแสดง diff ของสิ่งที่จะเปลี่ยน แต่ `plan` ไม่ assert อะไรเลยว่าผลลัพธ์นั้นถูกต้อง มันแสดง diff ให้ดูอย่างสบายใจแม้ bucket จะตั้งชื่อผิด, subnet อยู่ผิด CIDR range หรือ security group เปิด port ที่ไม่ตั้งใจ ตราบใดที่ diff นั้น consistent ภายในตัวมันเอง
+`terraform plan` ปิดช่องว่างนี้ด้วยการคุยกับ AWS API จริง จึงจับ error ฝั่ง provider ได้ — AMI ID พิมพ์ผิด, region ที่ resource type นั้นไม่รองรับ, permission ที่ credential ของคุณไม่มี — และแสดง diff ของสิ่งที่จะเปลี่ยน แต่ `plan` ไม่ assert อะไรเลยว่าผลลัพธ์นั้นถูกต้อง แต่แสดง diff ให้ดูอย่างสบายใจแม้ bucket จะตั้งชื่อผิด, subnet อยู่ผิด CIDR range หรือ security group เปิด port ที่ไม่ตั้งใจ ตราบใดที่ diff นั้น consistent ในตัวเอง
 
-`terraform test` เป็นตัวเดียวในสามตัวที่ assert behavior ที่คาดหวังไว้จริง ๆ มันคือ native testing framework ของ Terraform และเป็นตัวที่บอกได้จริงว่า module ทำในสิ่งที่คุณตั้งใจให้มันทำหรือไม่ ไม่ใช่แค่ Terraform parse หรือ apply มันได้
+`terraform test` เป็นตัวเดียวในสามตัวที่ assert behavior ที่คาดหวังไว้จริง ๆ เป็น native testing framework ของ Terraform และเป็นตัวที่บอกได้จริงว่า module ทำสิ่งที่คุณตั้งใจไว้หรือไม่ ไม่ใช่แค่ Terraform parse หรือ apply ผ่าน
 
 ## native test framework ของ Terraform
 
@@ -44,15 +44,15 @@ run "bucket_name_matches_input" {
 }
 ```
 
-test นี้เล็งไปที่ pattern ของ `s3-bucket` module จากบทก่อนหน้าในโมดูลนี้ มันตั้ง `bucket_name` เป็น input เฉพาะของ test แล้ว assert ว่า attribute `aws_s3_bucket.this.bucket` ที่ได้ตรงกับค่าที่ส่งเข้ามาเป๊ะ ถ้ามีใครแก้ module แล้วเผลอ hardcode ชื่อ bucket หรือส่ง variable ผิดตัวเข้ามา assertion นี้จะ fail พร้อม message ที่ชี้ตรงไปที่ความผิดพลาด — สิ่งที่ `validate` กับ `plan` เพียงอย่างเดียวไม่มีทางจับได้เลย
+test นี้เล็งไปที่ pattern ของ `s3-bucket` module จากบทก่อนหน้าในโมดูลนี้ โดยตั้ง `bucket_name` เป็น input เฉพาะของ test แล้ว assert ว่า attribute `aws_s3_bucket.this.bucket` ที่ได้ตรงกับค่าที่ส่งเข้ามาเป๊ะ ถ้ามีใครแก้ module แล้วเผลอ hardcode ชื่อ bucket หรือส่ง variable ผิดตัวเข้ามา assertion นี้จะ fail พร้อม message ที่ชี้ตรงไปที่ความผิดพลาด — สิ่งที่ `validate` กับ `plan` เพียงอย่างเดียวไม่มีทางจับได้เลย
 
 ## command = plan เทียบกับ command = apply
 
 ทุก `run` block มี `command` argument และการเลือกระหว่าง `plan` กับ `apply` คือ trade-off จริง ไม่ใช่แค่ความชอบส่วนตัว
 
-`command = plan` เร็วและไม่สร้าง resource จริงเลย Terraform สร้าง plan แล้ว assertion ของคุณตรวจค่าที่วางแผนไว้ — เหมือนตัวอย่างข้างบนเป๊ะ นี่คือ default ที่ถูกต้องสำหรับ test case ส่วนใหญ่ เพราะมัน validate behavior ที่คาดหวังไว้ได้โดยไม่ต้องแตะ AWS account จริงเลย
+`command = plan` เร็วและไม่สร้าง resource จริงเลย Terraform สร้าง plan แล้ว assertion ของคุณตรวจค่าที่วางแผนไว้ — เหมือนตัวอย่างข้างบนเป๊ะ นี่คือ default ที่ถูกต้องสำหรับ test case ส่วนใหญ่ เพราะ validate behavior ที่คาดหวังไว้ได้โดยไม่ต้องแตะ AWS account จริงเลย
 
-`command = apply` สร้าง resource จริง assert บน attribute ที่เกิดขึ้นจริง แล้วรื้อทุกอย่างทิ้งอีกครั้งตอนจบไฟล์ test นี่คือ integration testing ตัวจริง มันจับปัญหาที่ `plan` จับไม่ได้ เช่น AWS API ปฏิเสธ combination ของ argument ที่ดูดีบนกระดาษ ต้นทุนคือช้ากว่าและสร้าง cloud resource จริงชั่วคราว ดังนั้นควรเก็บไว้ใช้กับ assertion ที่ต้องดู behavior จริงของ AWS โดยเฉพาะ
+`command = apply` สร้าง resource จริง assert บน attribute ที่เกิดขึ้นจริง แล้วรื้อทุกอย่างทิ้งอีกครั้งตอนจบไฟล์ test นี่คือ integration testing ตัวจริง เพราะจับปัญหาที่ `plan` จับไม่ได้ เช่น AWS API ปฏิเสธ combination ของ argument ที่ดูดีบนกระดาษ ต้นทุนคือช้ากว่าและสร้าง cloud resource จริงชั่วคราว ดังนั้นควรเก็บไว้ใช้กับ assertion ที่ต้องดู behavior จริงของ AWS โดยเฉพาะ
 
 ```hcl
 run "bucket_is_created_with_correct_name" {
@@ -91,13 +91,13 @@ export const quizTestingModules = [
     options: [
       'ไม่ต่างกันเลย ทั้งสองสร้างและรื้อ resource จริงเหมือนกัน',
       'command = plan ช้ากว่าเพราะต้องคุยกับ AWS สองรอบ ส่วน command = apply เร็วกว่า',
-      'command = plan ตรวจค่าที่วางแผนไว้โดยไม่สร้าง resource จริง ส่วน command = apply สร้าง resource จริง assert บน attribute จริงของมัน แล้วรื้อทิ้งตอนจบ',
+      'command = plan ตรวจค่าที่วางแผนไว้โดยไม่สร้าง resource จริง ส่วน command = apply สร้าง resource จริง assert บน attribute จริงที่ได้ แล้วรื้อทิ้งตอนจบ',
       'command = plan ใช้ได้แค่กับ resource type aws_s3_bucket เท่านั้น',
     ],
     answer: 2,
   },
   {
-    q: 'ทำไม module ที่ผ่าน terraform validate ถึงไม่ได้แปลว่ามันทำงานได้จริงกับ AWS',
+    q: 'ทำไม module ที่ผ่าน terraform validate ถึงไม่ได้แปลว่าทำงานได้จริงกับ AWS',
     options: [
       'เพราะ validate ตรวจแค่ syntax ของ HCL กับความสอดคล้องภายใน และไม่ติดต่อ AWS API เลย จึงจับ error ฝั่ง provider หรือ behavior ที่ผิดไม่ได้',
       'เพราะ validate ถูก deprecate ไปแล้วและไม่ตรวจอะไรจริง ๆ',
@@ -110,7 +110,7 @@ export const quizTestingModules = [
     q: 'terraform test เพิ่มอะไรเข้ามาเหนือกว่าสิ่งที่ terraform plan ให้ได้อยู่แล้ว',
     options: [
       'ไม่มีอะไรเลย plan กับ test ตรวจสิ่งเดียวกันเป๊ะ',
-      'terraform test assert behavior ที่คาดหวังจริง ๆ ผ่าน condition กับ error_message ในขณะที่ plan แค่แสดง diff โดยไม่ assert ว่า diff นั้นถูกต้อง',
+      'terraform test assert behavior ที่คาดหวังจริง ๆ ผ่าน condition กับ error_message ส่วน plan แค่แสดง diff โดยไม่ assert ว่า diff นั้นถูกต้อง',
       'terraform test แทนที่ความจำเป็นของ provider configuration ไปเลยทั้งหมด',
       'terraform test รันได้เฉพาะตอนที่ไม่มี variables block เท่านั้น',
     ],

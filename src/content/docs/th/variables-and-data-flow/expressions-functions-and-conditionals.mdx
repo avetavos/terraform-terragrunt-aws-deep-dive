@@ -14,7 +14,7 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 Terraform configuration ไม่ได้มีแค่ค่า static เท่านั้น expression เรียก built-in function ได้ แยกทางด้วย conditional ได้ และสร้าง nested block จำนวนไม่คงที่ได้ ทั้งหมดนี้ถูก evaluate ก่อนที่จะสร้าง resource ใด ๆ เลยด้วยซ้ำ
 
-## Built-in function และ terraform console สำหรับเช็คมัน
+## Built-in function และ terraform console สำหรับตรวจค่า
 
 Terraform มี standard library ของ built-in function ให้มาเยอะมาก และไม่มีทางประกาศ function เองได้ ควรจำเป็นหมวดมากกว่าจำทีละตัว string function อย่าง `join`, `split`, `format` ไว้จัดรูปแบบ text collection function อย่าง `lookup`, `merge`, `contains` ทำงานกับ list, map, set numeric function จัดการเรื่องคำนวณกับปัดเศษ และมี function เฉพาะทาง networking ชุดหนึ่ง ที่สำคัญที่สุดคือ `cidrsubnet` เพราะการหั่น IP address range ด้วยมือคือการคำนวณซ้ำ ๆ ที่ผิดพลาดง่าย งานแบบนี้ควรให้ function ทำแทน
 
@@ -41,7 +41,7 @@ resource "aws_subnet" "app" {
 
 `cidrsubnet(prefix, newbits, netnum)` รับ parent CIDR block มา ขยาย prefix length ออกไปอีก `newbits` แล้วเติม bit ใหม่ด้วย `netnum` เพื่อได้ subnet หนึ่งตัว ถ้า VPC เป็น `/16` และ `newbits = 4` แต่ละ call จะได้ `/20` และการส่ง `count.index` เป็น `netnum` จะแจก subnet ที่ต่อเนื่องกันและไม่ทับกันให้อัตโนมัติ ไม่ต้องมานั่งคำนวณ `10.0.16.0/20`, `10.0.32.0/20` ไปเรื่อย ๆ ด้วยมือ และไม่ต้องมานั่งจำว่า range ไหนถูกใช้ไปแล้ว
 
-ก่อนจะเอา function ที่ไม่คุ้นเคยไปใส่ใน resource argument `terraform console` คือวิธีเร็วที่สุดที่จะเช็คว่ามัน return อะไรจริง ๆ มันเปิด interactive REPL ที่ทำงานกับ configuration และ state ปัจจุบัน โดยไม่แตะ infrastructure จริงเลย
+ก่อนจะเอา function ที่ไม่คุ้นเคยไปใส่ใน resource argument `terraform console` คือวิธีเร็วที่สุดที่จะเช็คว่า return อะไรจริง ๆ โดยเปิด interactive REPL ที่ทำงานกับ configuration และ state ปัจจุบัน โดยไม่แตะ infrastructure จริงเลย
 
 ```bash
 terraform console
@@ -56,11 +56,11 @@ terraform console
 "t3.small"
 ```
 
-ทุกคำตอบด้านบนนี้คือสิ่งที่ปกติแล้วต้องเดา ต้องรัน `plan` เต็ม ๆ เพื่อดู หรือต้องคำนวณเองบนกระดาษ `terraform console` evaluate expression อะไรก็ได้ ไม่ว่าจะเป็นการเรียก function, การอ้างอิง variable หรือ resource attribute, หรือ conditional ทั้งก้อน แล้ว print ผลลัพธ์ออกมาทันที ทำให้มันเป็นจุดแรกที่ควรไปเช็คเวลาพฤติกรรมของ expression ไม่ชัดเจน
+ทุกคำตอบด้านบนนี้คือสิ่งที่ปกติแล้วต้องเดา ต้องรัน `plan` เต็ม ๆ เพื่อดู หรือต้องคำนวณเองบนกระดาษ `terraform console` evaluate expression อะไรก็ได้ ไม่ว่าจะเป็นการเรียก function, การอ้างอิง variable หรือ resource attribute, หรือ conditional ทั้งก้อน แล้ว print ผลลัพธ์ออกมาทันที ทำให้เป็นจุดแรกที่ควรไปเช็คเวลาพฤติกรรมของ expression ไม่ชัดเจน
 
 ## Conditional expression
 
-conditional expression มีสามส่วนตายตัว `condition ? true_val : false_val` Terraform evaluate `condition` ให้เป็น boolean แล้ว return `true_val` ถ้าเป็น `true` หรือ `false_val` ถ้าไม่ใช่ ไม่มีอะไรซับซ้อนไปกว่านี้ แต่พอรวมกับการเรียก function มันกลายเป็นวิธีที่กระชับสำหรับเลือกระหว่างสองค่าที่คำนวณไว้
+conditional expression มีสามส่วนตายตัว `condition ? true_val : false_val` Terraform evaluate `condition` ให้เป็น boolean แล้ว return `true_val` ถ้าเป็น `true` หรือ `false_val` ถ้าไม่ใช่ ไม่มีอะไรซับซ้อนไปกว่านี้ แต่พอรวมกับการเรียก function ก็กลายเป็นวิธีที่กระชับสำหรับเลือกระหว่างสองค่าที่คำนวณไว้
 
 ```hcl
 variable "environment" {
@@ -80,11 +80,11 @@ resource "aws_instance" "web" {
 }
 ```
 
-`local.instance_type` resolve ออกมาเป็น string ตัวใดตัวหนึ่งจากสองตัวก่อนที่ `aws_instance.web` จะถูก plan ด้วยซ้ำ ไม่มีการแตกทางเหลืออยู่ตอน apply มีแค่ค่าเดียวที่ resolve เสร็จแล้วอยู่ใน `instance_type` นี่คือ pattern ที่ควรใช้เวลาค่าขึ้นอยู่กับเงื่อนไข yes/no ตัวเดียว ส่วนกรณีที่มีผลลัพธ์มากกว่าสองแบบ `lookup` กับ map (แบบด้านบน) หรือ `for` expression มักจะชัดเจนกว่าการซ้อน conditional เข้าไปในกันเอง
+`local.instance_type` resolve ออกมาเป็น string ตัวใดตัวหนึ่งจากสองตัวก่อนจะ plan `aws_instance.web` ด้วยซ้ำ ไม่มีการแตกทางเหลืออยู่ตอน apply มีแค่ค่าเดียวที่ resolve เสร็จแล้วอยู่ใน `instance_type` นี่คือ pattern ที่ควรใช้เวลาค่าขึ้นอยู่กับเงื่อนไข yes/no ตัวเดียว ส่วนกรณีที่มีผลลัพธ์มากกว่าสองแบบ `lookup` กับ map (แบบด้านบน) หรือ `for` expression มักจะชัดเจนกว่าการซ้อน conditional เข้าไปในกันเอง
 
 ## Dynamic block: nested block จำนวนไม่คงที่
 
-`count` กับ `for_each` บน resource ที่จะพูดถึงในบทถัดไป สร้าง resource ทั้งตัวจำนวนไม่คงที่ `dynamic` block แก้ปัญหาคนละแบบที่แคบกว่านั้น มันสร้าง nested block ที่ซ้ำกันจำนวนไม่คงที่ *ภายใน* resource เดียว เวลาที่จำนวน nested block เหล่านั้นขึ้นอยู่กับ collection ที่ขนาดยังไม่รู้จนกว่า configuration จะรัน
+`count` กับ `for_each` บน resource ที่จะพูดถึงในบทถัดไป สร้าง resource ทั้งตัวจำนวนไม่คงที่ `dynamic` block แก้ปัญหาคนละแบบที่แคบกว่านั้น โดยสร้าง nested block ที่ซ้ำกันจำนวนไม่คงที่ *ภายใน* resource เดียว เวลาที่จำนวน nested block เหล่านั้นขึ้นอยู่กับ collection ที่ขนาดยังไม่รู้จนกว่า configuration จะรัน
 
 ```hcl
 variable "allowed_ports" {
@@ -123,7 +123,7 @@ export const conditionalFunctionDiagram = `flowchart LR
   r --> res["aws_instance.web"]`;
 
 <Callout title="The one-line takeaway">
-Terraform มี **function** library ในตัวครอบคลุมทั้ง string, collection, numeric และ networking อย่าง `join`, `merge`, `cidrsubnet` และ **`terraform console`** ให้ evaluate expression อะไรก็ได้แบบ interactive กับ state จริงก่อนจะใส่ลงไปใน resource argument **conditional expression** — `condition ? true_val : false_val` — resolve ออกมาเป็นค่าใดค่าหนึ่งจากสองค่าก่อนที่ resource จะถูก plan ด้วยซ้ำ **`dynamic`** block สร้าง nested block ที่ซ้ำกันจำนวนไม่คงที่ *ภายใน* resource เดียวจาก collection ซึ่งเป็นคนละปัญหากับการสร้าง resource ทั้งตัวจำนวนไม่คงที่ด้วย **`count`** หรือ **`for_each`** ที่จะพูดถึงในบทถัดไป
+Terraform มี **function** library ในตัวครอบคลุมทั้ง string, collection, numeric และ networking อย่าง `join`, `merge`, `cidrsubnet` และ **`terraform console`** ให้ evaluate expression อะไรก็ได้แบบ interactive กับ state จริงก่อนจะใส่ลงไปใน resource argument **conditional expression** — `condition ? true_val : false_val` — resolve ออกมาเป็นค่าใดค่าหนึ่งจากสองค่าก่อนจะ plan resource ด้วยซ้ำ **`dynamic`** block สร้าง nested block ที่ซ้ำกันจำนวนไม่คงที่ *ภายใน* resource เดียวจาก collection ซึ่งต่างจากการสร้าง resource ทั้งตัวจำนวนไม่คงที่ด้วย **`count`** หรือ **`for_each`** ที่จะพูดถึงในบทถัดไป
 </Callout>
 
 export const quizExpressionsFunctions = [

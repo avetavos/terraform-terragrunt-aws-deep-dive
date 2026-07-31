@@ -1,6 +1,6 @@
 ---
 title: 'Terraform Workspaces'
-description: 'workspace ของ Terraform isolate state ต่อ environment จาก configuration เดียวกันได้ยังไง และมันหยุด isolate ตรงไหน'
+description: 'workspace ของ Terraform isolate state ต่อ environment จาก configuration เดียวกันได้ยังไง และหยุด isolate ตรงไหน'
 sidebar:
   order: 2
 ---
@@ -33,7 +33,7 @@ terraform workspace list
 terraform workspace select staging
 ```
 
-แต่ละ workspace ได้ state file ของตัวเอง แต่ทุก workspace ยังอ่านไฟล์ `.tf` ชุดเดียวกันเป๊ะ และชี้ไปที่ backend configuration เดียวกันเป๊ะ สั่ง `terraform plan` ใน workspace `dev` จะมองแค่ state ของ `dev` เท่านั้น สลับไป `staging` แล้ว Terraform จะทำตัวเหมือนไม่เคยเห็น resource ของ `staging` มาก่อน เพราะในมุมของ state file นั้น มันไม่เคยเห็นจริง ๆ
+แต่ละ workspace ได้ state file ของตัวเอง แต่ทุก workspace ยังอ่านไฟล์ `.tf` ชุดเดียวกันเป๊ะ และชี้ไปที่ backend configuration เดียวกันเป๊ะ สั่ง `terraform plan` ใน workspace `dev` จะมองแค่ state ของ `dev` เท่านั้น สลับไป `staging` แล้ว Terraform จะทำตัวเหมือนไม่เคยเห็น resource ของ `staging` มาก่อน เพราะในมุมของ state file นั้น ไม่เคยเห็นจริง ๆ
 
 ## ปรับพฤติกรรมด้วย terraform.workspace
 
@@ -62,13 +62,13 @@ resource "aws_instance" "app" {
 
 ## สิ่งที่ workspace ไม่ isolate
 
-นี่คือข้อจำกัดที่ต้องจำไว้ workspace isolate แค่ **state** เท่านั้น มันไม่เปลี่ยนอย่างอื่นเลย ทุก workspace ที่สร้างจาก configuration เดียวกันแชร์สิ่งเหล่านี้ร่วมกัน
+นี่คือข้อจำกัดที่ต้องจำไว้ workspace isolate แค่ **state** เท่านั้น ไม่เปลี่ยนอย่างอื่นเลย ทุก workspace ที่สร้างจาก configuration เดียวกันแชร์สิ่งเหล่านี้ร่วมกัน
 
 - **backend configuration** เดียวกันเป๊ะ S3 bucket เดียวกัน, region เดียวกัน, account เดียวกัน
 - **provider configuration** เดียวกันเป๊ะ AWS credential เดียวกัน เว้นแต่จะเขียน logic แบบ conditional เพื่อสลับเอง
 - โค้ด **`.tf`** เดียวกันเป๊ะ ไม่มี hard boundary ใด ๆ กัน workspace `dev` ไม่ให้มี resource block ที่ ถ้า config ผิด ก็แตะ infrastructure ระดับ production ได้เท่ากับ workspace อื่น
 
-นี่ทำให้ workspace เหมาะกับความต่างแบบเบา ๆ ที่โครงสร้างเหมือนกันทุกอย่าง เช่น preview environment อายุสั้นต่อ feature branch ที่แค่ต้องการ state ของตัวเองกับ instance size ที่เล็กกว่า เป็น use case ที่ดี แต่มันเป็นตัวเลือกที่แย่ทันทีที่ environment หนึ่งต้องการ AWS account จริง ๆ ที่ต่างกัน, region ต่างกัน, หรือ credential ต่างกันจากที่อื่น เพราะ workspace แสดงความต่างแบบนั้นไม่ได้เลย มันเป็นแค่ชื่อ
+นี่ทำให้ workspace เหมาะกับความต่างแบบเบา ๆ ที่โครงสร้างเหมือนกันทุกอย่าง เช่น preview environment อายุสั้นต่อ feature branch ที่แค่ต้องการ state ของตัวเองกับ instance size ที่เล็กกว่า เป็น use case ที่ดี แต่เป็นตัวเลือกที่แย่ทันทีที่ environment หนึ่งต้องการ AWS account จริง ๆ ที่ต่างกัน, region ต่างกัน, หรือ credential ต่างกันจากที่อื่น เพราะ workspace แสดงความต่างแบบนั้นไม่ได้เลย เป็นแค่ชื่อ
 
 ความเสี่ยงที่คมกว่าและเกิดขึ้นในชีวิตจริงคือเรื่องคน ไม่ใช่เรื่อง architecture active workspace คือ state ชิ้นหนึ่งที่ CLI เลือกไว้ ซึ่งอยู่นอกไฟล์ `.tf` ไปเลย ไม่มีอะไรกัน engineer ที่คิดว่าตัวเองอยู่ใน `dev` สั่ง `terraform apply` แล้วมาพบทีหลังว่า terminal นั้นยังค้างอยู่ใน `prod` จากชั่วโมงก่อนหน้า ไม่มี credential แยก ไม่มี account boundary แยก ไม่มี confirmation prompt ที่ผูกกับชื่อ workspace เลย มีแค่ string ที่ลืมง่าย
 
@@ -80,17 +80,17 @@ export const workspaceDiagram = `flowchart LR
   cfg --> prod["workspace: prod (own state file)"]`;
 
 <Callout title="สรุปหนึ่งบรรทัด">
-**workspace** ของ Terraform ทำให้ configuration เดียวและ backend เดียวมี **state file** ที่แยกกันได้หลายชุด เลือกด้วยชื่อผ่าน `terraform workspace new/select/list` และอ่านในโค้ด `.tf` ผ่าน `terraform.workspace` เป็นวิธี DRY จริง ๆ ในการปรับ instance size, ชื่อ, และ tag ต่อ environment โดยไม่ต้องทำโค้ดซ้ำเลย สิ่งที่มัน **ไม่** isolate คือ backend, provider configuration, หรือโค้ด `.tf` เอง ทำให้มันเป็นตัวเลือกที่แย่สำหรับ environment ที่ต้องการ AWS account, region, หรือ credential แยกกันจริง ๆ และยังทิ้งความเสี่ยงในชีวิตจริงไว้ ไม่มีอะไรกันการ apply ผิด workspace โดยไม่ตั้งใจ เพราะมันเป็นแค่ string ที่ CLI เลือกไว้
+**workspace** ของ Terraform ทำให้ configuration เดียวและ backend เดียวมี **state file** ที่แยกกันได้หลายชุด เลือกด้วยชื่อผ่าน `terraform workspace new/select/list` และอ่านในโค้ด `.tf` ผ่าน `terraform.workspace` เป็นวิธี DRY จริง ๆ ในการปรับ instance size, ชื่อ, และ tag ต่อ environment โดยไม่ต้องทำโค้ดซ้ำเลย สิ่งที่ **ไม่ได้** isolate คือ backend, provider configuration, หรือโค้ด `.tf` เอง ทำให้เป็นตัวเลือกที่แย่สำหรับ environment ที่ต้องการ AWS account, region, หรือ credential แยกกันจริง ๆ และยังทิ้งความเสี่ยงในชีวิตจริงไว้ ไม่มีอะไรกันการ apply ผิด workspace โดยไม่ตั้งใจ เพราะเป็นแค่ string ที่ CLI เลือกไว้
 </Callout>
 
 export const quizWorkspaces = [
   {
     q: 'workspace ของ Terraform isolate อะไรจริง ๆ และไม่ isolate อะไร',
     options: [
-      'มัน isolate AWS account กับ credential แต่แชร์ state',
-      'มัน isolate state file แต่ backend configuration, provider configuration, และโค้ด .tf ถูกแชร์กันในทุก workspace',
-      'มัน isolate ทุกอย่าง รวมถึง provider credential และ backend configuration',
-      'มันไม่ isolate อะไรเลย workspace เป็นแค่ label ที่ไม่มีผลต่อการทำงาน',
+      'isolate AWS account กับ credential แต่แชร์ state',
+      'isolate state file แต่ backend configuration, provider configuration, และโค้ด .tf ถูกแชร์กันในทุก workspace',
+      'isolate ทุกอย่าง รวมถึง provider credential และ backend configuration',
+      'ไม่ isolate อะไรเลย workspace เป็นแค่ label ที่ไม่มีผลต่อการทำงาน',
     ],
     answer: 1,
   },
