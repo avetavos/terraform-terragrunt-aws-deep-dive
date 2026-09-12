@@ -27,19 +27,19 @@ module "vpc" {
 
 นี่คือ failure mode เดียวกับที่ provider lock file มีไว้ป้องกัน แค่ขยับขึ้นมาอีกชั้นหนึ่ง แทนที่ provider plugin จะเปลี่ยนไปโดยที่คุณไม่รู้ตัว กลายเป็น implementation ภายในของ module เองที่เปลี่ยนไปโดยที่คุณไม่รู้ตัวแทน
 
-## pessimistic constraint operator: version = "~> 5.0"
+## pessimistic constraint operator: version = "~> 6.0"
 
 การ pin module จาก Registry หรือ Git tag ด้วย `version` argument แก้ปัญหานี้ได้ pattern ที่ใช้กันทั่วไปคือ pessimistic constraint operator หรือ `~>`
 
 ```hcl
-# pinned - allows 5.x patch and minor upgrades, blocks a 6.0 major bump
+# pinned - allows 6.x patch and minor upgrades, blocks a 7.0 major bump
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
-  version = "~> 5.0"
+  version = "~> 6.0"
 }
 ```
 
-`~> 5.0` แปลว่า "อนุญาต version ใดก็ได้ที่มากกว่าหรือเท่ากับ `5.0` ไปจนถึงแต่ไม่รวม `6.0`" พูดอีกแบบคือ ยอมให้ Terraform ดึง patch และ minor release ภายในสาย `5.x` ได้ — bug fix กับของใหม่ที่ backward-compatible — แต่ปฏิเสธการกระโดดไป `6.0` แบบเงียบ ๆ เพราะ major version bump คือสัญญาณที่คนเขียน module บอกว่าให้เตรียมรับ breaking change คุณยังเป็นคนเลือกเองว่าจะกระโดดตอนไหน และอ่าน changelog ของ module ก่อนได้เสมอ
+`~> 6.0` แปลว่า "อนุญาต version ใดก็ได้ที่มากกว่าหรือเท่ากับ `6.0` ไปจนถึงแต่ไม่รวม `7.0`" พูดอีกแบบคือ ยอมให้ Terraform ดึง patch และ minor release ภายในสาย `6.x` ได้ — bug fix กับของใหม่ที่ backward-compatible — แต่ปฏิเสธการกระโดดไป `7.0` แบบเงียบ ๆ เพราะ major version bump คือสัญญาณที่คนเขียน module บอกว่าให้เตรียมรับ breaking change คุณยังเป็นคนเลือกเองว่าจะกระโดดตอนไหน และอ่าน changelog ของ module ก่อนได้เสมอ
 
 ## private module source กับการ publish module ของตัวเอง
 
@@ -64,15 +64,15 @@ module "internal_networking" {
 
 export const moduleVersioningDiagram = `flowchart TB
   subgraph pinned["Pinned version"]
-    p1["version = ~> 5.0"] --> p2["terraform init always resolves within 5.x"]
+    p1["version = ~> 6.0"] --> p2["terraform init always resolves within 6.x"]
   end
   subgraph unpinned["Unpinned version"]
-    u1["no version constraint"] --> u2["terraform init -upgrade may resolve 6.0"]
+    u1["no version constraint"] --> u2["terraform init -upgrade may resolve 7.0"]
     u2 --> u3["breaking changes applied without changelog review"]
   end`;
 
 <Callout title="The one-line takeaway">
-module `source` ที่ไม่ pin version ไว้สามารถ resolve ไปเป็น version ใหม่กว่าเดิมที่มี breaking change ได้แบบเงียบ ๆ ในครั้งถัดไปที่ `init` รัน ดังนั้น module จาก Registry และ Git tag ควรมี `version` constraint เหมือนกับที่ provider มีใน lock file pessimistic constraint operator คือ `version = "~> 5.0"` อนุญาต patch และ minor upgrade ภายในสาย `5.x` แต่กัน major bump ไป `6.0` ไว้จนกว่าคุณจะเลือกกระโดดเอง module ที่เฉพาะกับองค์กรและไม่ควร public มักอยู่ใน **private Git repository** หรือ **private module registry** แทนที่จะอยู่บน public Registry ส่วน module ที่คุณต้องการ publish แบบ public ต้องตาม naming convention ของ repository คือ `terraform-<PROVIDER>-<NAME>` เช่น `terraform-aws-vpc`
+module `source` ที่ไม่ pin version ไว้สามารถ resolve ไปเป็น version ใหม่กว่าเดิมที่มี breaking change ได้แบบเงียบ ๆ ในครั้งถัดไปที่ `init` รัน ดังนั้น module จาก Registry และ Git tag ควรมี `version` constraint เหมือนกับที่ provider มีใน lock file pessimistic constraint operator คือ `version = "~> 6.0"` อนุญาต patch และ minor upgrade ภายในสาย `6.x` แต่กัน major bump ไป `7.0` ไว้จนกว่าคุณจะเลือกกระโดดเอง module ที่เฉพาะกับองค์กรและไม่ควร public มักอยู่ใน **private Git repository** หรือ **private module registry** แทนที่จะอยู่บน public Registry ส่วน module ที่คุณต้องการ publish แบบ public ต้องตาม naming convention ของ repository คือ `terraform-<PROVIDER>-<NAME>` เช่น `terraform-aws-vpc`
 </Callout>
 
 export const quizModuleVersioning = [
@@ -87,11 +87,11 @@ export const quizModuleVersioning = [
     answer: 1,
   },
   {
-    q: 'version = "~> 5.0" อนุญาตอะไร และกันอะไร',
+    q: 'version = "~> 6.0" อนุญาตอะไร และกันอะไร',
     options: [
-      'อนุญาตทุก version รวมถึง 6.0 ขึ้นไปโดยไม่มีข้อจำกัด',
-      'อนุญาตเฉพาะ version 5.0 เป๊ะ ๆ เท่านั้น',
-      'อนุญาต patch และ minor upgrade ในสาย 5.x แต่กัน major version bump ไปเป็น 6.0',
+      'อนุญาตทุก version รวมถึง 7.0 ขึ้นไปโดยไม่มีข้อจำกัด',
+      'อนุญาตเฉพาะ version 6.0 เป๊ะ ๆ เท่านั้น',
+      'อนุญาต patch และ minor upgrade ในสาย 6.x แต่กัน major version bump ไปเป็น 7.0',
       'กัน upgrade ทุกอย่างจนกว่าจะเอา constraint ออกเอง',
     ],
     answer: 2,

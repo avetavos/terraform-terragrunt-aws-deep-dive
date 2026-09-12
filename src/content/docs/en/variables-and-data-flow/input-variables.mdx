@@ -105,6 +105,38 @@ variable "environment" {
 
 Without that first `validation` block, passing `instance_type = "x1.enormous"` would sail through `terraform plan` and only fail once Terraform actually calls the EC2 API to create the instance — a much slower feedback loop, and a much less specific error message than "instance_type must be a t3 or m6i size." The `can()` wrapper turns a `regex()` failure into `false` instead of an outright error, which is exactly what a `condition` expression needs: it must always evaluate to `true` or `false`, never raise.
 
+## Two newer arguments: ephemeral and deprecated
+
+Two more arguments are worth knowing because they solve problems the ones above cannot.
+
+`sensitive = true` hides a value from output but still writes it to state. **`ephemeral = true`** (Terraform 1.10+) actually keeps it out: the value is available while the operation runs and is omitted from both state and the plan file.
+
+```hcl
+variable "session_token" {
+  type      = string
+  ephemeral = true
+}
+```
+
+The trade-off is that an ephemeral value can only flow into places that also refuse to persist it — a write-only resource argument, another ephemeral variable or resource, a provider block, or a provisioner. Assigning one to an ordinary resource argument is an error. The Secrets and Credential Management lesson shows the full pattern with a write-only argument on the receiving end.
+
+**`deprecated`** (Terraform 1.15+) is for module authors renaming an input without breaking every caller at once. The string you supply is shown as a warning whenever someone sets that variable:
+
+```hcl
+variable "subnet_id" {
+  type       = string
+  default    = null
+  deprecated = "Use subnet_ids instead; subnet_id will be removed in v3.0."
+}
+
+variable "subnet_ids" {
+  type    = list(string)
+  default = []
+}
+```
+
+Callers keep working and get told what to change, which is what makes a staged migration possible in a repository where you do not control every consumer of the module.
+
 ## Setting variable values, and who wins
 
 Terraform lets you set a value for the same variable from several places at once, and it resolves conflicts with a strict, well-defined precedence. From highest priority (wins) to lowest:

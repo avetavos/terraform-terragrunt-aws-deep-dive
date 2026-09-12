@@ -101,6 +101,21 @@ terraform state rm aws_instance.web
 
 `terraform state mv` is what you reach for when you restructure your configuration — say, moving a resource into a module — and do not want Terraform to see that as "destroy the old one, create a new one." It updates the address in state to match the new location in your HCL, and the real AWS resource is never touched. `terraform state rm` is the opposite direction of `import`: it deletes a resource's entry from state so Terraform forgets about it entirely, but the real object in AWS keeps running exactly as it was. That is useful when you want to hand a resource off to a different Terraform configuration, or deliberately stop managing something without deleting it.
 
+Both have the same drawback the CLI `import` command had: they happen immediately, on one machine, with nothing in the repository recording that they happened. The `removed` block is the declarative counterpart to `terraform state rm`, in the same way the `import` block is to `terraform import`:
+
+```hcl
+# Stop managing this resource, but leave the real object running in AWS
+removed {
+  from = aws_instance.web
+
+  lifecycle {
+    destroy = false
+  }
+}
+```
+
+Delete the `resource` block and add this alongside it. The `lifecycle` argument is required and is the whole point: `destroy = false` means "forget it, leave it alone," while `destroy = true` means "forget it and delete the real object." Because it is configuration, the change shows up in `terraform plan`, gets reviewed in a pull request, and applies identically on every machine and every CI run — instead of relying on each person to remember the right CLI incantation. Once the apply has gone through everywhere, the `removed` block has done its job and can be deleted.
+
 <Mermaid title="A manual console edit is caught as drift by plan, while an existing untracked resource is brought in via import" code={driftImportDiagram} />
 
 export const driftImportDiagram = `flowchart LR
@@ -110,7 +125,7 @@ export const driftImportDiagram = `flowchart LR
   state -->|next plan| clean["plan shows no diff, if config matches"]`;
 
 <Callout title="The one-line takeaway">
-**Configuration drift** is any gap between your Terraform configuration and the real state of AWS caused by changes made outside Terraform — `terraform plan` surfaces it as a diff, and `terraform apply -refresh-only` lets you update Terraform's recorded state to match reality without changing any real infrastructure. **`terraform import`** (the CLI command) associates an existing, manually-created resource with a resource address you have already written in your config, but it only populates the state entry — you still hand-write the matching `resource` block yourself. The newer **`import` block** (Terraform 1.5+) does the same job declaratively inside a `.tf` file, and is preferred where available because it is plannable and reviewable in `terraform plan` before it happens, rather than an immediate, unreviewed CLI side effect. `terraform state mv` and `terraform state rm` reorganize or stop tracking resources in state without ever touching the real infrastructure.
+**Configuration drift** is any gap between your Terraform configuration and the real state of AWS caused by changes made outside Terraform — `terraform plan` surfaces it as a diff, and `terraform apply -refresh-only` lets you update Terraform's recorded state to match reality without changing any real infrastructure. **`terraform import`** (the CLI command) associates an existing, manually-created resource with a resource address you have already written in your config, but it only populates the state entry — you still hand-write the matching `resource` block yourself. The newer **`import` block** (Terraform 1.5+) does the same job declaratively inside a `.tf` file, and is preferred where available because it is plannable and reviewable in `terraform plan` before it happens, rather than an immediate, unreviewed CLI side effect. `terraform state mv` and `terraform state rm` reorganize or stop tracking resources in state without ever touching the real infrastructure, and the **`removed` block** — with its required `lifecycle { destroy = false }` — is the declarative, reviewable form of `state rm`.
 </Callout>
 
 export const quizDriftImport = [

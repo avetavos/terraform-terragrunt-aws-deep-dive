@@ -16,7 +16,7 @@ Install Terraform through a version manager rather than a single pinned binary, 
 
 ## Installing Terraform (and why a version manager beats a single binary)
 
-You can download a single Terraform binary from HashiCorp and put it on your `PATH`, and that works fine for a solo experiment. The moment you work on more than one project, though, that approach breaks down: one repository was written against Terraform 1.5, another needs a 1.9 feature, and a third has already migrated to OpenTofu. Keeping one global binary in sync with whichever project you happen to be in is a constant, error-prone chore.
+You can download a single Terraform binary from HashiCorp and put it on your `PATH`, and that works fine for a solo experiment. The moment you work on more than one project, though, that approach breaks down: one repository was written against Terraform 1.5, another needs a 1.11 feature, and a third has already migrated to OpenTofu. Keeping one global binary in sync with whichever project you happen to be in is a constant, error-prone chore.
 
 A **version manager** solves this by installing multiple versions side by side and switching between them per project, usually driven by a version file committed to the repository. **tenv** is a good choice specifically because it is not tied to a single tool: it manages Terraform, OpenTofu, Terragrunt, and Atmos versions all from one CLI, which matters once your team is running Terragrunt alongside Terraform (covered later in this course).
 
@@ -25,8 +25,8 @@ A **version manager** solves this by installing multiple versions side by side a
 brew install tenv
 
 # install and pin a specific Terraform version for the current directory
-tenv tf install 1.9.0
-tenv tf use 1.9.0
+tenv tf install 1.16.2
+tenv tf use 1.16.2
 
 # tenv reads a .terraform-version file (or the terraform block's
 # required_version constraint) to pick the right version automatically
@@ -41,12 +41,12 @@ A Terraform project is just a directory containing one or more `.tf` files. The 
 
 ```hcl
 terraform {
-  required_version = ">= 1.7.0"
+  required_version = ">= 1.11.0"
 
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.0"
+      version = "~> 6.0"
     }
   }
 }
@@ -69,12 +69,12 @@ Real projects split that single file into several, by convention:
 ```hcl
 # providers.tf
 terraform {
-  required_version = ">= 1.7.0"
+  required_version = ">= 1.11.0"
 
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.0"
+      version = "~> 6.0"
     }
   }
 }

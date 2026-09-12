@@ -41,18 +41,18 @@ resource "aws_s3_bucket" "reports" {
 
 ```hcl
 terraform {
-  required_version = ">= 1.7.0"
+  required_version = ">= 1.11.0"
 
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.0"
+      version = "~> 6.0"
     }
   }
 }
 ```
 
-`source` คือ registry address ของ provider (`hashicorp/aws` ชี้ไปที่ AWS provider ตัวจริงบน Terraform Registry) ส่วน `version` เป็น constraint ไม่ใช่การ pin ตายตัว — `~> 5.0` อนุญาตทุก release ในสาย `5.x`
+`source` คือ registry address ของ provider (`hashicorp/aws` ชี้ไปที่ AWS provider ตัวจริงบน Terraform Registry) ส่วน `version` เป็น constraint ไม่ใช่การ pin ตายตัว — `~> 6.0` อนุญาตทุก release ในสาย `6.x`
 
 จากนั้น `provider` block ตั้งค่า instance หนึ่งของ provider ที่ประกาศไว้ด้านบน สำหรับ AWS ตรงนี้คือที่อยู่ของ region (และในโปรเจกต์จริง ๆ ก็มีเรื่องอย่าง assumed role ด้วย)
 

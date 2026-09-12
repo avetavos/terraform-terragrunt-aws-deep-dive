@@ -105,6 +105,38 @@ variable "environment" {
 
 ถ้าไม่มี `validation` block แรก การส่ง `instance_type = "x1.enormous"` จะผ่าน `terraform plan` ไปเฉย ๆ แล้วไปพังตอน Terraform เรียก EC2 API จริง ๆ เพื่อสร้าง instance — feedback loop ช้ากว่ามาก และ error message ก็เฉพาะเจาะจงน้อยกว่า "instance_type must be a t3 or m6i size" มาก `can()` ที่ wrap ไว้ทำหน้าที่แปลง error จาก `regex()` ให้กลายเป็น `false` แทนที่จะ error ตรง ๆ ซึ่งตรงกับสิ่งที่ `condition` expression ต้องการพอดี เพราะต้อง evaluate ออกมาเป็น `true` หรือ `false` เสมอ ห้าม raise error
 
+## สอง argument ที่ใหม่กว่า: ephemeral กับ deprecated
+
+มีอีกสอง argument ที่ควรรู้ เพราะแก้ปัญหาที่ตัวข้างบนแก้ไม่ได้
+
+`sensitive = true` ซ่อนค่าจาก output แต่ยังเขียนลง state อยู่ดี ส่วน **`ephemeral = true`** (Terraform 1.10 ขึ้นไป) กันออกจริง ค่าใช้ได้ระหว่างที่ operation รันอยู่ และถูกตัดออกจากทั้ง state และ plan file
+
+```hcl
+variable "session_token" {
+  type      = string
+  ephemeral = true
+}
+```
+
+ข้อแลกเปลี่ยนคือค่า ephemeral ไหลไปได้แค่ที่ที่ไม่เก็บค่าเหมือนกัน — write-only argument ของ resource, ephemeral variable หรือ resource ตัวอื่น, provider block หรือ provisioner การเอาไป assign ให้ argument ปกติของ resource จะ error บทเรื่อง Secrets and Credential Management แสดง pattern เต็มคู่กับ write-only argument ที่ปลายทาง
+
+**`deprecated`** (Terraform 1.15 ขึ้นไป) มีไว้สำหรับคนเขียน module ที่อยากเปลี่ยนชื่อ input โดยไม่ทำให้ caller ทุกรายพังพร้อมกัน string ที่ใส่ไว้จะถูกแสดงเป็น warning ทุกครั้งที่มีคน set variable ตัวนั้น
+
+```hcl
+variable "subnet_id" {
+  type       = string
+  default    = null
+  deprecated = "Use subnet_ids instead; subnet_id will be removed in v3.0."
+}
+
+variable "subnet_ids" {
+  type    = list(string)
+  default = []
+}
+```
+
+caller เดิมยังทำงานได้และได้รู้ว่าต้องแก้อะไร ซึ่งคือสิ่งที่ทำให้ migrate แบบค่อยเป็นค่อยไปได้จริงใน repo ที่คุณไม่ได้คุม consumer ของ module ทุกราย
+
 ## ตั้งค่า variable และใครชนะ
 
 Terraform ยอมให้ตั้งค่า variable ตัวเดียวกันจากหลายที่พร้อมกัน แล้วแก้ conflict ด้วยลำดับความสำคัญที่ตายตัว เรียงจากสำคัญที่สุด (ชนะ) ไปน้อยที่สุด:

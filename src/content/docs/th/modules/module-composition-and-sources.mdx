@@ -27,7 +27,7 @@ module "bucket" {
 # public Terraform Registry
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
-  version = "~> 5.0"
+  version = "~> 6.0"
 }
 
 # Git URL pinned to a specific tag
@@ -96,7 +96,7 @@ pattern ทั่วไปอย่าง "VPC ที่มี public/private su
 ```hcl
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
-  version = "~> 5.0"
+  version = "~> 6.0"
 
   name = "acme-app-vpc"
   cidr = "10.0.0.0/16"

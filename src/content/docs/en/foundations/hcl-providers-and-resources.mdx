@@ -41,18 +41,18 @@ The `terraform` block configures Terraform itself: which version of Terraform is
 
 ```hcl
 terraform {
-  required_version = ">= 1.7.0"
+  required_version = ">= 1.11.0"
 
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.0"
+      version = "~> 6.0"
     }
   }
 }
 ```
 
-`source` is the provider's registry address (`hashicorp/aws` resolves to the official AWS provider on the Terraform Registry), and `version` is a constraint, not a pin — `~> 5.0` allows any `5.x` release.
+`source` is the provider's registry address (`hashicorp/aws` resolves to the official AWS provider on the Terraform Registry), and `version` is a constraint, not a pin — `~> 6.0` allows any `6.x` release.
 
 The `provider` block then configures one instance of a provider you declared above — for AWS, this is where the region (and, in real projects, things like assumed roles) lives:
 

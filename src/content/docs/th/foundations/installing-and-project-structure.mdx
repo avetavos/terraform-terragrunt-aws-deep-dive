@@ -16,7 +16,7 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 ## ติดตั้ง Terraform (และทำไม version manager ถึงดีกว่า binary เดี่ยว)
 
-คุณดาวน์โหลด Terraform binary ตัวเดียวจาก HashiCorp แล้ววางไว้ใน `PATH` ได้ และวิธีนี้ก็ใช้งานได้ดีถ้าทำ experiment คนเดียว แต่พอทำงานมากกว่าหนึ่งโปรเจกต์ วิธีนี้จะเริ่มมีปัญหา repository หนึ่งเขียนไว้สำหรับ Terraform 1.5 อีกอันต้องใช้ฟีเจอร์ของ 1.9 และอีกอันก็ migrate ไปใช้ OpenTofu แล้ว การคอยสลับ binary ตัวเดียวให้ตรงกับโปรเจกต์ที่คุณอยู่ตอนนั้นคืองานที่ต้องทำตลอดและผิดพลาดได้ง่าย
+คุณดาวน์โหลด Terraform binary ตัวเดียวจาก HashiCorp แล้ววางไว้ใน `PATH` ได้ และวิธีนี้ก็ใช้งานได้ดีถ้าทำ experiment คนเดียว แต่พอทำงานมากกว่าหนึ่งโปรเจกต์ วิธีนี้จะเริ่มมีปัญหา repository หนึ่งเขียนไว้สำหรับ Terraform 1.5 อีกอันต้องใช้ฟีเจอร์ของ 1.11 และอีกอันก็ migrate ไปใช้ OpenTofu แล้ว การคอยสลับ binary ตัวเดียวให้ตรงกับโปรเจกต์ที่คุณอยู่ตอนนั้นคืองานที่ต้องทำตลอดและผิดพลาดได้ง่าย
 
 **Version manager** แก้ปัญหานี้ด้วยการติดตั้งหลายเวอร์ชันไว้พร้อมกัน แล้วสลับใช้ตามโปรเจกต์ ส่วนใหญ่อ้างอิงจากไฟล์บอกเวอร์ชันที่ commit ไว้ใน repository **tenv** เป็นตัวเลือกที่ดีเพราะไม่ได้ผูกกับเครื่องมือตัวเดียว จัดการเวอร์ชันของ Terraform, OpenTofu, Terragrunt และ Atmos ทั้งหมดจาก CLI ตัวเดียว ซึ่งสำคัญมากเมื่อทีมของคุณรัน Terragrunt คู่กับ Terraform (จะพูดถึงในคอร์สนี้ช่วงหลัง)
 
@@ -25,8 +25,8 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 brew install tenv
 
 # install and pin a specific Terraform version for the current directory
-tenv tf install 1.9.0
-tenv tf use 1.9.0
+tenv tf install 1.16.2
+tenv tf use 1.16.2
 
 # tenv reads a .terraform-version file (or the terraform block's
 # required_version constraint) to pick the right version automatically
@@ -41,12 +41,12 @@ terraform version
 
 ```hcl
 terraform {
-  required_version = ">= 1.7.0"
+  required_version = ">= 1.11.0"
 
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.0"
+      version = "~> 6.0"
     }
   }
 }
@@ -69,12 +69,12 @@ resource "aws_s3_bucket" "reports" {
 ```hcl
 # providers.tf
 terraform {
-  required_version = ">= 1.7.0"
+  required_version = ">= 1.11.0"
 
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.0"
+      version = "~> 6.0"
     }
   }
 }

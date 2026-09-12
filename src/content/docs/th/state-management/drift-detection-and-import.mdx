@@ -101,6 +101,21 @@ terraform state rm aws_instance.web
 
 `terraform state mv` คือคำสั่งที่ใช้เวลาปรับโครงสร้าง configuration ใหม่ — เช่นย้าย resource เข้าไปอยู่ใน module — แล้วไม่อยากให้ Terraform มองว่าเป็น "ลบตัวเก่า สร้างตัวใหม่" แค่ update address ใน state ให้ตรงกับตำแหน่งใหม่ใน HCL และ resource จริงบน AWS ไม่ถูกแตะเลย `terraform state rm` คือทิศตรงข้ามของ `import` — โดยลบ entry ของ resource ออกจาก state ทำให้ Terraform ลืมไปเลย แต่ object จริงบน AWS ยังทำงานต่อเหมือนเดิมทุกอย่าง มีประโยชน์เวลาอยากส่งต่อ resource ให้ Terraform configuration อื่นดูแล หรือตั้งใจหยุดจัดการอะไรบางอย่างโดยไม่ลบทิ้ง
 
+ทั้งสองคำสั่งมีข้อเสียเดียวกับที่คำสั่ง `import` แบบ CLI มี คือเกิดขึ้นทันที บนเครื่องเดียว และไม่มีอะไรใน repository บันทึกไว้ว่าเคยเกิดขึ้น `removed` block คือคู่แบบ declarative ของ `terraform state rm` เหมือนที่ `import` block เป็นคู่ของ `terraform import`
+
+```hcl
+# Stop managing this resource, but leave the real object running in AWS
+removed {
+  from = aws_instance.web
+
+  lifecycle {
+    destroy = false
+  }
+}
+```
+
+ลบ `resource` block ออกแล้วใส่อันนี้แทน argument `lifecycle` เป็นสิ่งที่ต้องใส่และคือหัวใจทั้งหมด `destroy = false` แปลว่า "ลืมมันไป แต่อย่าไปแตะ" ส่วน `destroy = true` แปลว่า "ลืมมันไปและลบ object จริงทิ้ง" เพราะมันเป็น configuration การเปลี่ยนแปลงนี้จึงโผล่ใน `terraform plan` ถูก review ใน pull request และ apply ได้เหมือนกันทุกเครื่องทุก CI run แทนที่จะต้องหวังให้แต่ละคนจำคำสั่ง CLI ที่ถูกต้องได้ พอ apply ผ่านครบทุกที่แล้ว `removed` block ก็ทำงานเสร็จหน้าที่และลบทิ้งได้
+
 <Mermaid title="A manual console edit is caught as drift by plan, while an existing untracked resource is brought in via import" code={driftImportDiagram} />
 
 export const driftImportDiagram = `flowchart LR
@@ -110,7 +125,7 @@ export const driftImportDiagram = `flowchart LR
   state -->|next plan| clean["plan shows no diff, if config matches"]`;
 
 <Callout title="สรุปหนึ่งบรรทัด">
-**configuration drift** คือช่องว่างระหว่าง configuration ของ Terraform กับสภาพจริงบน AWS ที่เกิดจากการเปลี่ยนแปลงนอก Terraform — `terraform plan` เปิดโปงออกมาเป็น diff และ `terraform apply -refresh-only` ให้คุณ update state ที่บันทึกไว้ให้ตรงกับของจริง โดยไม่แตะ infrastructure จริงเลย **`terraform import`** (คำสั่ง CLI) เชื่อม resource ที่มีอยู่แล้วและสร้างด้วยมือเข้ากับ resource address ที่คุณเขียนไว้ใน config แล้ว แต่แค่เติม state entry เท่านั้น — คุณยังต้องเขียน `resource` block ที่ตรงกันเอง **`import` block** ที่ใหม่กว่า (Terraform 1.5 ขึ้นไป) ทำงานเดียวกันแบบ declarative ในไฟล์ `.tf` และเป็นที่แนะนำเมื่อใช้ได้ เพราะ plan ได้ review ได้ใน `terraform plan` ก่อนเกิดขึ้นจริง แทนที่จะเป็น CLI side effect ที่เกิดทันทีโดยไม่มีใคร review `terraform state mv` และ `terraform state rm` จัดระเบียบหรือหยุด track resource ใน state โดยไม่แตะ infrastructure จริงเลย
+**configuration drift** คือช่องว่างระหว่าง configuration ของ Terraform กับสภาพจริงบน AWS ที่เกิดจากการเปลี่ยนแปลงนอก Terraform — `terraform plan` เปิดโปงออกมาเป็น diff และ `terraform apply -refresh-only` ให้คุณ update state ที่บันทึกไว้ให้ตรงกับของจริง โดยไม่แตะ infrastructure จริงเลย **`terraform import`** (คำสั่ง CLI) เชื่อม resource ที่มีอยู่แล้วและสร้างด้วยมือเข้ากับ resource address ที่คุณเขียนไว้ใน config แล้ว แต่แค่เติม state entry เท่านั้น — คุณยังต้องเขียน `resource` block ที่ตรงกันเอง **`import` block** ที่ใหม่กว่า (Terraform 1.5 ขึ้นไป) ทำงานเดียวกันแบบ declarative ในไฟล์ `.tf` และเป็นที่แนะนำเมื่อใช้ได้ เพราะ plan ได้ review ได้ใน `terraform plan` ก่อนเกิดขึ้นจริง แทนที่จะเป็น CLI side effect ที่เกิดทันทีโดยไม่มีใคร review `terraform state mv` และ `terraform state rm` จัดระเบียบหรือหยุด track resource ใน state โดยไม่แตะ infrastructure จริงเลย ส่วน **`removed` block** พร้อม `lifecycle { destroy = false }` ที่ต้องใส่ คือรูปแบบ declarative ที่ review ได้ของ `state rm`
 </Callout>
 
 export const quizDriftImport = [
