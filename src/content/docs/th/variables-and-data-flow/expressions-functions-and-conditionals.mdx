@@ -47,7 +47,7 @@ resource "aws_subnet" "app" {
 terraform console
 ```
 
-```
+```text
 > cidrsubnet("10.0.0.0/16", 4, 2)
 "10.0.32.0/20"
 > join("-", ["payments", "prod", "logs"])

@@ -35,10 +35,10 @@ terragrunt plan-all
 terragrunt apply-all
 ```
 
-`terragrunt run-all <command>` ยังรันได้อยู่ทุกวันนี้ แต่ **deprecated** แล้ว กำลังถูกแทนที่ด้วย `run --all` ที่เป็น syntax ที่คอร์สนี้สอน
+`terragrunt run-all <command>` เจอชะตากรรมเดียวกันช้ากว่าหนึ่งรอบ release: ถูก deprecate ก่อน แล้วก็ **ถูกลบออกไปทั้งหมด** เมื่อ CLI redesign มาถึง Terragrunt เวอร์ชันปัจจุบัน รันวันนี้จะ fail ทันทีด้วย `unknown command: "run-all"` เหมือนกับ `plan-all`
 
 ```bash
-# Deprecated — being replaced by run --all; avoid in new configuration
+# Removed in current Terragrunt — fails with "unknown command: run-all"; use run --all instead
 terragrunt run-all plan
 ```
 
@@ -88,7 +88,7 @@ export const runAllDiagram = `flowchart LR
   vpc -->|after_hook| slack["notify-slack.sh"]`;
 
 <Callout title="สรุปหนึ่งบรรทัด">
-`terragrunt run --all plan` กับ `terragrunt run --all apply` คือคำสั่งที่ใช้งานอยู่ตอนนี้สำหรับรันทุก unit ใน directory tree พร้อมกัน ตามลำดับที่ Terragrunt คำนวณจาก `dependency` block ของแต่ละ unit `terragrunt plan-all` กับ `apply-all` ถูก **ลบออกไปทั้งหมดแล้ว** ส่วน `terragrunt run-all <command>` ยังรันได้อยู่แต่ **deprecated** และกำลังถูกแทนที่ด้วย `run --all` scope การรันให้แคบลงเฉพาะบางส่วนของ tree ด้วย `--filter` และข้าม prompt แบบ interactive ใน CI ด้วย `--non-interactive` อย่าลืม separator `--` เมื่อมี flag วางอยู่ก่อนคำสั่ง `before_hook` หรือ `after_hook` ข้างใน `terraform` block ของ unit รันคำสั่ง shell อะไรก็ได้ก่อนหรือหลัง operation หนึ่งบน unit นั้น เช่น validate tag ก่อน `plan` หรือแจ้งเตือน Slack หลัง `apply` สำเร็จ
+`terragrunt run --all plan` กับ `terragrunt run --all apply` คือคำสั่งที่ใช้งานอยู่ตอนนี้สำหรับรันทุก unit ใน directory tree พร้อมกัน ตามลำดับที่ Terragrunt คำนวณจาก `dependency` block ของแต่ละ unit `terragrunt plan-all`/`apply-all` และ `run-all <command>` ที่มาทีหลังต่างก็ถูก **ลบออกไปทั้งหมดแล้ว** จาก Terragrunt เวอร์ชันปัจจุบัน แทนที่ด้วย `run --all` scope การรันให้แคบลงเฉพาะบางส่วนของ tree ด้วย `--filter` และข้าม prompt แบบ interactive ใน CI ด้วย `--non-interactive` อย่าลืม separator `--` เมื่อมี flag วางอยู่ก่อนคำสั่ง `before_hook` หรือ `after_hook` ข้างใน `terraform` block ของ unit รันคำสั่ง shell อะไรก็ได้ก่อนหรือหลัง operation หนึ่งบน unit นั้น เช่น validate tag ก่อน `plan` หรือแจ้งเตือน Slack หลัง `apply` สำเร็จ
 </Callout>
 
 export const quizRunAll = [
@@ -115,12 +115,12 @@ export const quizRunAll = [
   {
     q: 'สถานะของคำสั่ง terragrunt run-all ตอนนี้เป็นยังไง',
     options: [
-      'ถูกลบไปพร้อมกับ plan-all และ apply-all',
-      'ยังรันได้อยู่ทุกวันนี้ แต่ deprecated แล้ว กำลังถูกแทนที่ด้วย run --all',
-      'เป็น syntax ใหม่ล่าสุดที่เพิ่งเพิ่มมาหลัง run --all',
       'ไม่เคยมีอยู่ใน Terragrunt เลย',
+      'เป็น syntax ใหม่ล่าสุดที่เพิ่งเพิ่มมาหลัง run --all',
+      'ถูกลบออกไปแล้วจาก Terragrunt เวอร์ชันปัจจุบันใน CLI redesign รันวันนี้จะ fail ด้วย "unknown command" เหมือนกับ plan-all และ apply-all',
+      'ยังรันได้เหมือน run --all ทุกอย่าง ไม่มี deprecation warning เลย',
     ],
-    answer: 1,
+    answer: 2,
   },
   {
     q: 'before_hook หรือ after_hook ใช้ทำอะไร',

@@ -52,7 +52,7 @@ module "internal_networking" {
 }
 
 # private module registry (e.g. HCP Terraform)
-module "internal_networking" {
+module "internal_networking_hcp" {
   source  = "app.terraform.io/acme-corp/networking/aws"
   version = "~> 2.1"
 }

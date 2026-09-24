@@ -28,7 +28,7 @@ terraform init
 terraform plan
 ```
 
-```
+```text
 # example output
 Terraform will perform the following actions:
 
@@ -83,7 +83,7 @@ When `terraform init` resolves your `required_providers` version constraints, it
 ```hcl
 # .terraform.lock.hcl (excerpt — Terraform manages this file's contents)
 provider "registry.terraform.io/hashicorp/aws" {
-  version     = "5.55.0"
+  version     = "6.15.0"
   constraints = "~> 6.0"
   hashes = [
     "h1:examplehashvaluegeneratedbyterraforminit=",

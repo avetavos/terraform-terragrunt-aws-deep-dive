@@ -44,12 +44,12 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: actions/checkout@v7
+      - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: arn:aws:iam::111122223333:role/github-actions-terraform
           aws-region: us-east-1
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
       - run: terragrunt run --all plan -no-color | tee plan.txt
       - run: gh pr comment ${{ github.event.pull_request.number }} --body-file plan.txt
         env:
@@ -60,12 +60,12 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
-      - uses: actions/checkout@v4
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: actions/checkout@v7
+      - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: arn:aws:iam::111122223333:role/github-actions-terraform
           aws-region: us-east-1
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
       - run: terragrunt run --all apply --non-interactive
 ```
 
@@ -77,7 +77,7 @@ A pull request against application code is reviewed for logic, tests, and style 
 
 Terraform calls this a **forced replacement**. Certain arguments on certain resources cannot be updated in place — changing them means the provider has no API call for "modify this attribute," only "destroy and create a new one." An RDS instance's `identifier`, an EBS volume's `availability_zone`, or a resource's own name in some providers all fall into this category. When that happens, `terraform plan` marks the resource with `-/+` instead of the in-place `~`:
 
-```bash
+```text
 # terraform plan output — this is the line to stop and read carefully
   # aws_db_instance.main must be replaced
 -/+ resource "aws_db_instance" "main" {
@@ -104,10 +104,10 @@ jobs:
   plan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Assume AWS role via OIDC
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: arn:aws:iam::111122223333:role/github-actions-terraform
           aws-region: us-east-1

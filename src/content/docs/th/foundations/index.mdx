@@ -11,6 +11,8 @@ import Callout from '../../../../components/Callout.astro';
 
 ทุกตัวอย่างในคอร์สนี้ใช้ **AWS** เป็นเป้าหมาย ด้วย resource type จริง (`aws_instance`, `aws_s3_bucket`, `aws_iam_role` และอื่น ๆ) และ remote backend แบบ S3 จริง — HCL syntax, state model และแนวคิดของ Terragrunt ที่คุณเรียนไปใช้ได้ตรงกับ provider อื่นเช่นกัน เปลี่ยนแค่ชื่อ resource type กับ backend configuration เท่านั้น ส่วนที่ practice ปัจจุบันเพิ่งเปลี่ยนไป — เช่น native state locking ของ S3 ที่มาแทน DynamoDB แบบเดิม หรือคำสั่ง `run --all` ของ Terragrunt ที่มาแทน `run-all`/`plan-all` ที่เลิกใช้แล้ว — คอร์สนี้สอนรูปแบบที่ถูกต้องและเป็นปัจจุบัน พร้อมบอกตรง ๆ ว่าอันไหนเปลี่ยนไป เพราะ tutorial จำนวนมากบนอินเทอร์เน็ตยังตามไม่ทัน
 
+ทุกคำสั่ง ตัวอย่าง HCL และ flag ของ CLI ในคอร์สนี้ตรวจสอบกับ **Terraform 1.16**, **Terragrunt 1.1** และ **`hashicorp/aws` provider `~> 6.0`** — เวอร์ชัน stable ปัจจุบัน ณ เวลาที่เขียน
+
 ## สิ่งที่คอร์สนี้ครอบคลุม
 
 | Module | คุณจะได้เรียน |

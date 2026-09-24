@@ -41,11 +41,11 @@ remote_state {
   }
 
   config = {
-    bucket         = "acme-terraform-state"
-    key            = "${path_relative_to_include()}/terraform.tfstate"
-    region         = "us-east-1"
-    encrypt        = true
-    dynamodb_table = "acme-terraform-locks"
+    bucket       = "acme-terraform-state"
+    key          = "${path_relative_to_include()}/terraform.tfstate"
+    region       = "us-east-1"
+    encrypt      = true
+    use_lockfile = true
   }
 }
 ```
